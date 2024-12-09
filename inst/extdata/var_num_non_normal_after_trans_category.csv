@@ -1,0 +1,4 @@
+variable,category,cutoff
+hba1c,<5.7,5.6
+hba1c,5.7 to <6.5,6.4
+hba1c,6.5+,Inf

@@ -1,0 +1,19 @@
+variable,value,old_label
+sex,1,Male
+sex,2,Female
+education,1,Non Educated
+education,2,Elementary school
+education,3,Junior high school
+education,4,Senior high school
+education,5,College
+marital_status,1,Single
+marital_status,2,Married
+marital_status,3,Widow‎/widower
+comorbidity,0,No comor
+comorbidity,1,Having Comor
+dm_treatment,1,OHA Alone
+dm_treatment,2,Combined OHA and Insulin
+cig_smoking,0,No Smoking
+cig_smoking,1,Smoking
+fatigue,0,No fatigue
+fatigue,1,Fatigue

@@ -1,0 +1,14 @@
+V1,V2
+ms_age,education
+ms_age,marital_status
+age,dm_duration
+age,marital_status
+sex,dm_treatment
+sex,cig_smoking
+education,marital_status
+comorbidity,cig_smoking
+comorbidity,hba1c
+comorbidity,fatigue
+dm_treatment,hba1c
+dm_treatment,fatigue
+hba1c,fatigue

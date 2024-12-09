@@ -1,0 +1,13 @@
+variable,definition
+age,Participant-reported age at the time of survey (years)
+cig_smoking, Participant-reported cigarette smoking at the time of survey (no/yes)
+comorbidity,Comorbidity by reviewing medical records from the past three months (no/yes)
+dm_duration,Duration of diabetes mellitus by reviewing medical records from the past three months (years)
+dm_treatment,Type of diabetes mellitus treatment by reviewing medical records from the past three months (oral hypoglycemic agent/combination of oral hypoglycemic agent and insulin)
+education,Participant-reported education at the time of survey (no education/primary school/junior secondary school/senior secondary school/college graduate)
+fatigue,Participant-reported fatigue at the time of survey (no/yes)
+hba1c,Glycated hemoglobin (HbA1c) level by reviewing medical records from the past three months (%)
+marital_status,Participant-reported marital status at the time of survey (unmarried/married/widowed or divorced)
+ms_age,Missing value of participant-reported age at the time of survey (no/yes)
+ms_dm_duration,Missing value of duration of diabetes mellitus by reviewing medical records from the past three months (no/yes)
+sex,Participant-reported biological sex (female/male)
