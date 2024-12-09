@@ -1,0 +1,1650 @@
+---
+title: "Causal machine learning for identifying fatigue-related poor glycated hemoglobin among individuals with type 2 diabetes"
+author: "Herdiantri Sufriyana, Emily Chia-Yu Su, Rudy Kurniawan, Hsiao-Yean Chiu,
+  Safiruddin Al-Baqi, Debby Syahru Romadlon"
+date: "2024-08-09"
+output: html_document
+---
+
+# Programming environment
+
+```{r Set random seed, include=FALSE}
+seed=2024-08-09
+```
+
+```{r Load packages, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(ggpubr)
+library(broom)
+library(MASS)
+select <- dplyr::select
+library(igraph)
+library(ggnetwork)
+library(brms)
+library(broom.mixed)
+library(pbapply)
+library(mice)
+filter <- dplyr::filter
+cbind <- base::cbind
+rbind <- base::rbind
+```
+
+```{r Choose theme, include=FALSE}
+dslabs::ds_theme_set()
+```
+
+```{r Determine kable format, include=FALSE}
+kable_format <- 'html'
+```
+
+```{r Load functions, include=FALSE}
+list.files('R/',full.names=T) |>
+  lapply(source)
+```
+
+# Data preprocessing
+
+## Data cleaning
+
+```{r Load raw data, include=FALSE}
+raw_data <- haven::read_sav("inst/extdata/raw_data3.sav")
+```
+
+```{r Write old column names, eval=FALSE, include=FALSE}
+raw_data |>
+  colnames() |>
+  as.data.frame() |>
+  `colnames<-`("old_colname") |>
+  write_csv("inst/extdata/old_colname.csv")
+```
+
+```{r Read new column names, include=FALSE}
+new_colname <-
+  read_csv("inst/extdata/new_colname.csv", show_col_types = FALSE)
+```
+
+```{r table-1, echo=FALSE}
+new_colname |>
+  kable(
+    format = kable_format
+    ,caption = "Table 1. Column name conversion."
+  ) |>
+  kable_classic()
+```
+
+```{r Standardize column names, include=FALSE}
+cleaned_data1 <-
+  raw_data |>
+  `colnames<-`(
+    data.frame(old_colname = colnames(raw_data)) |>
+      left_join(new_colname,by = join_by(old_colname)) |>
+      pull(new_colname)
+  )
+```
+
+```{r Write old predefined labels, eval=FALSE, include=FALSE}
+cleaned_data1 |>
+  lapply(attr, "label") |>
+  imap(~ data.frame(value = .x)) |>
+  lapply(rownames_to_column, var = "old_label") |>
+  imap(~ mutate(.x, variable = .y)) |>
+  reduce(rbind) |>
+  select(variable, value, everything()) |>
+  write_csv("inst/extdata/old_predefined_label.csv")
+```
+
+```{r Read new existing labels, include=FALSE}
+new_existing_label <-
+  read_csv("inst/extdata/new_predefined_label.csv", show_col_types = FALSE)
+```
+
+```{r table-2, echo=FALSE}
+new_existing_label |>
+  kable(
+    format = kable_format
+    ,caption = "Table 2. Predefined label conversion."
+  ) |>
+  kable_classic()
+```
+
+```{r Use new existing labels as values if any, include=FALSE}
+cleaned_data2 <-
+  cleaned_data1 |>
+  select_at(unique(new_existing_label$variable)) |>
+  mutate_all(as.character) |>
+  mutate(i = seq(n())) |>
+  gather(variable, value, -i) |>
+  left_join(
+    mutate_all(new_existing_label, as.character)  
+    ,by = join_by(variable, value)
+  ) |>
+  select(i, variable, value = new_label) |>
+  spread(variable, value) |>
+  arrange(i) |>
+  select(-i)
+
+cleaned_data2 <-
+  cleaned_data2 |>
+  cbind(
+    cleaned_data1 |>
+      select_at(
+        colnames(cleaned_data1)[
+          !colnames(cleaned_data1)
+          %in% colnames(cleaned_data2)
+        ]
+      )
+  )
+
+cleaned_data2 <-
+  cleaned_data2 |>
+  select_at(colnames(cleaned_data1))
+```
+
+```{r Determine identifiers, include=FALSE}
+cleaned_data3 <-
+  cleaned_data2 |>
+  mutate(
+    id_no =
+      str_pad(
+        id_no
+        ,str_count(max(id_no))
+        ,"left"
+        ,0
+      )
+    ,id_init=
+      str_to_lower(id_init)
+  ) |>
+  unite(id, id_no, id_init, sep = "_") |>
+  column_to_rownames(var = "id")
+```
+
+```{r Finalize cleaned data without SPSS attributes, include=FALSE}
+cleaned_data <-
+  cleaned_data3 |>
+  lapply(`attributes<-`,NULL) |>
+  as.data.frame() |>
+  `rownames<-`(rownames(cleaned_data3))
+```
+
+# Data transformation
+
+```{r Separate categorical and numerical variables, include=FALSE}
+cat_data <-
+  cleaned_data |>
+  select_if(!sapply(cleaned_data, is.numeric))
+
+num_data <-
+  cleaned_data |>
+  select_if(sapply(cleaned_data, is.numeric))
+```
+
+```{r Normal QQ plots of numeric variables, include=FALSE}
+normal_qq <-
+  num_data |>
+  imap(
+    ~ data.frame(value = .x) |>
+      ggplot(aes(sample = value)) +
+      stat_qq(na.rm = TRUE) +
+      stat_qq_line(color = "red", na.rm = TRUE) +
+      coord_flip() +
+      xlab("Normal Quantiles") +
+      ylab(.y)
+  )
+
+normal_qq <-
+  normal_qq |>
+  length() |>
+  seq() |>
+  split(LETTERS[1:3]) |>
+  data.frame() |>
+  pmap(
+    \(A, B, C)
+    ggarrange(
+      normal_qq[[A]]
+      ,normal_qq[[B]]
+      ,normal_qq[[C]]
+      ,ncol = 3
+    )
+  )
+
+normal_qq <-
+  ggarrange(
+    normal_qq[[1]]
+    ,ncol=1
+  )
+```
+
+```{r figure-1, echo=FALSE, fig.height=5, fig.width=15}
+normal_qq
+```
+
+```{r Determine normality by QQ plot, include=FALSE}
+var_num_normal_qq <- c('age', 'dm_duration')
+```
+
+```{r Numerical variables with normal distribution by QQ plots, echo=FALSE}
+var_num_normal_qq |>
+  paste0(collapse=', ') |>
+  cat()
+```
+
+```{r Normality test of numerical variables, include=FALSE}
+normal_test <-
+  num_data |>
+  select_if(!names(num_data) %in% var_num_normal_qq) |>
+  lapply(shapiro.test) |>
+  lapply(tidy) |>
+  imap(~ mutate(.x, variable = .y)) |>
+  lapply(select, variable, everything()) |>
+  reduce(rbind)
+```
+
+```{r table-3, echo=FALSE}
+normal_test |>
+  select(-method) |>
+  mutate_at("statistic", round, 3) |>
+  arrange(p.value) |>
+  mutate(variable = paste0(variable, ifelse(p.value<=0.05,"*",""))) |>
+  mutate(p.value = ifelse(p.value<0.001, "<0.001", round(p.value,3))) |>
+  kable(
+    format = kable_format
+    ,caption = "Table S2. Normality test."
+  ) |>
+  footnote("*, p-value <=0.05, Shapiro-Wilk normality test.") |>
+  kable_classic()
+```
+
+```{r Determine num variables that are not normally distributed, include=FALSE}
+var_num_non_normal=
+  normal_test |>
+  filter(p.value <= 0.05) |>
+  pull(variable)
+```
+
+```{r Numerical variables that are not normally distributed, echo=FALSE}
+var_num_non_normal |>
+  paste0(collapse=', ') |>
+  cat()
+```
+
+```{r Non-normal mumerical variables with 0, include=FALSE}
+var_num_non_normal_with_zero <-
+  num_data |>
+  select_at(var_num_non_normal) |>
+  lapply(\(x) x[!duplicated(x)]) |>
+  lapply(\(x) x[!is.na(x)]) |>
+  sapply(\(x) any(x==0)) |>
+  which() |>
+  names()
+```
+
+```{r Non-normal mumerical variables with <0, include=FALSE}
+var_num_non_normal_with_neg <-
+  num_data |>
+  select_at(var_num_non_normal) |>
+  lapply(\(x) x[!duplicated(x)]) |>
+  lapply(\(x) x[!is.na(x)]) |>
+  sapply(\(x) any(x<0)) |>
+  which() |>
+  names()
+```
+
+```{r Non-normal mumerical variables infinited exp, include=FALSE}
+var_num_non_normal_with_inf_exp <-
+  num_data |>
+  select_at(var_num_non_normal) |>
+  lapply(\(x) x[!duplicated(x)]) |>
+  lapply(\(x) x[!is.na(x)]) |>
+  sapply(\(x) any(is.infinite(exp(x)))) |>
+  which() |>
+  names()
+```
+
+```{r Determine choices for a transformation technique, include=FALSE}
+trans_choice <-
+  data.frame(variable = var_num_non_normal) |>
+  mutate(
+    log =
+      ifelse(
+        variable%in%var_num_non_normal_with_zero
+        | variable%in%var_num_non_normal_with_neg
+        ,0
+        ,1
+      )
+    ,sqrt =
+      ifelse(
+        variable%in%var_num_non_normal_with_neg
+        ,0
+        ,1
+      )
+    ,inv =
+      ifelse(
+        variable%in%var_num_non_normal_with_zero
+        | variable%in%var_num_non_normal_with_neg
+        ,0
+        ,1
+      )
+    ,log2 =
+      ifelse(
+        variable%in%var_num_non_normal_with_zero
+        | variable%in%var_num_non_normal_with_neg
+        ,0
+        ,1
+      )
+    ,exp =
+      ifelse(
+        variable%in%var_num_non_normal_with_inf_exp
+        ,0
+        ,1
+      )
+    ,asinh = 1
+    ,bct =
+      ifelse(
+        variable%in%var_num_non_normal_with_zero
+        | variable%in%var_num_non_normal_with_neg
+        ,0
+        ,1
+      )
+  )
+```
+
+```{r Choices for a transformation technique, echo=FALSE}
+trans_choice |>
+  colnames() |>
+  setdiff("variable") |>
+  paste0(collapse=', ') |>
+  cat()
+```
+
+```{r Simple transformations, include=FALSE}
+simple_trans <-
+  trans_choice |>
+  gather(func, do, -variable) |>
+  filter(do == 1) |>
+  select(-do) |>
+  filter(!func %in% c("bct"))
+
+simple_trans <-
+  simple_trans |>
+  pull(func) |>
+  unique() |>
+  lapply(
+    \(x)
+    simple_trans |>
+      filter(func == x) |>
+      pull(variable) |>
+      lapply(
+        \(y)
+        list(
+            log = log
+            ,sqrt = sqrt
+            ,inv = \(x) 1/x
+            ,log2 = log2
+            ,exp = exp
+            ,asinh = asinh
+          )[[x]](num_data[[y]]) |>
+          as.data.frame() |>
+          `colnames<-`(y)
+      )
+  ) |>
+  `names<-`(unique(simple_trans$func))
+```
+
+```{r Box-Cox transformation (BCT), include=FALSE}
+bc_trans <-
+  trans_choice |>
+  gather(func, do, -variable) |>
+  filter(do == 1) |>
+  select(-do) |>
+  filter(func %in% c("bct")) |>
+  pull(variable)
+
+bc_trans <-
+  bc_trans |>
+  `names<-`(as.character(bc_trans)) |>
+  as.list()
+
+for(i in names(bc_trans)){
+  bc_trans[[i]]=
+    boxcox(
+      lm(num_data[[i]] ~ 1)
+      ,lambda = seq(-2, 2, by = 0.1)
+      ,plot = F
+    ) |>
+    c(list(value = num_data[[i]]))
+}
+
+rm(i)
+
+bc_trans=
+  bc_trans |>
+  lapply(
+    \(x)
+    list(
+      rep(NA, length(x$value))
+      ,(x$value^(x$x[which.max(x$y)]) - 1) / x$x[which.max(x$y)]
+    )[[ifelse(
+        abs(x$x[which.max(x$y)]) < 1e-10
+          ,1
+          ,2
+        )
+    ]]
+  ) |>
+  imap(
+    ~ data.frame(trans=.x) |>
+      `colnames<-`(.y)
+  )
+
+bc_trans <-
+  bc_trans[sapply(bc_trans, \(x) !all(is.na(x[[1]])))]
+```
+
+```{r Normality test of transformed numerical variables, include=FALSE}
+normal_test_after_trans <-
+  simple_trans |>
+  c(list(bct = bc_trans)) |>
+  imap(
+    ~ .x[[1]] |>
+      lapply(shapiro.test) |>
+      lapply(tidy) |>
+      imap(~ mutate(.x, variable = .y)) |>
+      reduce(rbind) |>
+      mutate(func = .y)
+  ) |>
+  reduce(rbind) |>
+  select(func, variable, p.value) |>
+  mutate_at("func", \(x) factor(x, unique(x))) |>
+  group_by(variable) |>
+  mutate(best_trans = func[which.max(p.value)]) |>
+  ungroup() |>
+  spread(func, p.value) |>
+  right_join(
+    data.frame(variable = var_num_non_normal)
+    ,by = join_by(variable)
+  ) |>
+  mutate(
+    p.value=
+      ifelse(
+        best_trans == "log"
+        ,log
+        ,ifelse(
+          best_trans == "sqrt"
+          ,sqrt
+          ,ifelse(
+            best_trans == "inv"
+            ,inv
+            ,ifelse(
+              best_trans == "log2"
+              ,log2
+              ,ifelse(
+                best_trans == "exp"
+                ,exp
+                ,ifelse(
+                  best_trans == "asinh"
+                  ,asinh
+                  ,bct
+                )
+              )
+            )
+          )
+        )
+      )
+  ) |>
+  select(variable, best_trans, p.value, everything())
+```
+
+```{r table-4, echo=FALSE}
+normal_test_after_trans |>
+  mutate(variable = paste0(variable, ifelse(p.value <= 0.05, "*", ""))) |>
+  arrange(p.value) |>
+  mutate_if(is.numeric, \(x) ifelse(x < 0.001, "<0.001", round(x, 3))) |>
+  mutate_if(is.numeric, as.character) |>
+  kable(
+    format = kable_format
+    ,caption = "Table 4. Normality test after transformation."
+  ) |>
+  footnote("*, p-value <=0.05, Shapiro-Wilk normality test.") |>
+  kable_classic()
+```
+
+```{r Determine num vars that are not normal after transformed, include=FALSE}
+var_num_non_normal_after_trans <-
+  normal_test_after_trans |>
+  filter(p.value <= 0.05) |>
+  pull(variable)
+```
+
+```{r Numerical variables that are not normal after transformation, echo=FALSE}
+var_num_non_normal_after_trans |>
+  paste0(collapse = ", ") |>
+  cat()
+```
+
+```{r Write those are not normal after transformed, eval=FALSE, include=FALSE}
+data.frame(variable = var_num_non_normal_after_trans) |>
+  write_csv('inst/extdata/var_num_non_normal_after_trans.csv')
+```
+
+```{r Define cats for vars that are not normal after transformed, include=FALSE}
+var_num_non_normal_after_trans_category <-
+  read_csv(
+    "inst/extdata/var_num_non_normal_after_trans_category.csv"
+    ,show_col_types = FALSE
+  )
+```
+
+```{r Cats for vars that are not normal after transformation, echo=FALSE}
+var_num_non_normal_after_trans_category |>
+  kable(
+    format =  kable_format
+    ,caption = 
+      paste0(
+        "Categorization for variables that "
+        ,"are not normal after transformation."
+      )
+    ,
+  ) |>
+  footnote(
+    paste0(
+      "A category was defined if a value was "
+      ,"less or equal to cutoff. "
+      ,"HbA1c was floored at 1 decimal."
+    )
+  ) |>
+  kable_classic()
+```
+
+```{r Transformation by categorization, include=FALSE}
+cat_trans <-
+  num_data |>
+  select_at(var_num_non_normal_after_trans) |>
+  mutate_at("hba1c", \(x) floor(x*10)/10) |>
+  imap(
+    ~ .x |>
+      cut(
+        breaks=
+          c(-Inf
+            ,var_num_non_normal_after_trans_category |>
+              filter(variable == .y) |>
+              pull(cutoff)
+          )
+        ,include.lowest = TRUE
+        ,labels = FALSE
+      ) |>
+      as.data.frame() |>
+      `colnames<-`("cat_num") |>
+      left_join(
+        var_num_non_normal_after_trans_category |>
+          filter(variable == .y) |>
+          pull(category) |>
+          as.data.frame() |>
+          `colnames<-`("cat_num") |>
+          mutate_at("cat_num", \(x) factor(x, unique(x))) |>
+          mutate(
+            cat_name = cat_num
+            ,cat_num = as.numeric(cat_num)
+          )
+        ,by = join_by(cat_num)
+      ) |>
+      pull(cat_name) |>
+      as.data.frame() |>
+      `colnames<-`(.y)
+  ) |>
+  reduce(cbind) |>
+  `rownames<-`(rownames(num_data)) |>
+  mutate_all(as.character) |>
+  rename_all(paste0, "_trans")
+```
+
+```{r Finalize transformed data, include=FALSE}
+transformed_data <-
+  num_data |>
+  cbind(cat_trans) |>
+  cbind(cat_data) |>
+  select_at(c(colnames(cat_trans), colnames(cleaned_data)))
+```
+
+# Outlier analysis
+
+```{r Numerical var after transformation, include=FALSE}
+trans_ps_num_data <-
+  transformed_data |>
+  select_if(sapply(transformed_data, is.numeric))
+
+trans_ps_num_data <-
+  trans_ps_num_data |>
+  select_at(
+    colnames(trans_ps_num_data) |>
+      setdiff(var_num_non_normal_after_trans)
+  )
+```
+
+```{r Identify outliers, include=FALSE}
+outlier_data <-
+  trans_ps_num_data |>
+  rownames_to_column(var = "id") |>
+  mutate_at("id", \(x) factor(x, unique(x))) |>
+  gather(variable, value, -id) |>
+  group_by(variable) |>
+  mutate(
+    q1 =
+      value |>
+      quantile(0.25, na.rm=T)
+    ,q3 =
+      value |>
+      quantile(0.75, na.rm=T)
+  ) |>
+  ungroup() |>
+  mutate(
+    outlier =
+      value < (q1 - 1.5 * (q3 - q1))
+      | value > (q3 + 1.5 * (q3 - q1))
+  )
+```
+
+```{r table-5, echo=FALSE}
+outlier_data |>
+  group_by(variable) |>
+  summarize(p_outliers = mean(outlier, na.rm=T)) |>
+  mutate(p_outliers = round(p_outliers * 100, 2)) |>
+  arrange(desc(p_outliers)) |>
+  kable(
+    format = kable_format
+    ,caption = "Outlier proportions of numerical variables."
+  ) |>
+  kable_classic()
+```
+
+```{r Assign outliers to missing, include=FALSE}
+outlier_removed_data <-
+  outlier_data |>
+  mutate(value = ifelse(outlier, NA, value)) |>
+  select(id, variable, value) |>
+  spread(variable,value) |>
+  arrange(id) |>
+  column_to_rownames(var = "id") |>
+  cbind(transformed_data[!sapply(transformed_data, is.numeric)]) |>
+  cbind(
+    transformed_data[
+      colnames(transformed_data)
+      %in% var_num_non_normal_after_trans
+    ]
+  )
+
+outlier_removed_data <-
+  outlier_removed_data[colnames(transformed_data)]
+```
+
+# Correlation matrix
+
+```{r Identify and create missingness variables, include=FALSE}
+ms_added_data <-
+  outlier_removed_data |>
+  sapply(\(x) any(is.na(x))) |>
+  which() |>
+  names() |>
+  lapply(
+    \(x)
+    outlier_removed_data |>
+      select_at(x) |>
+      `colnames<-`("value") |>
+      mutate(value = ifelse(is.na(value), "yes", "no")) |>
+      `colnames<-`(paste0("ms_", x))
+  ) |>
+  reduce(cbind) |>
+  cbind(outlier_removed_data)
+```
+
+```{r Write complete column names, eval=FALSE, include=FALSE}
+ms_added_data |>
+  colnames() |>
+  as.data.frame() |>
+  `colnames<-`("colname") |>
+  write_csv("inst/extdata/colname.csv")
+```
+
+```{r Read labels of complete column names, include=FALSE}
+colname_label <-
+  read_csv("inst/extdata/colname_label.csv", show_col_types = FALSE)
+```
+
+```{r Check categorical variables with a category of 1 value, include=FALSE}
+var_cat_val1=
+  ms_added_data |>
+  select_if(!sapply(ms_added_data, is.numeric)) |>
+  gather(variable, value) |>
+  group_by_all() |>
+  summarize(n = n(), .groups = "drop") |>
+  filter(n <= 1) |>
+  pull(variable) |>
+  unique()
+```
+
+```{r Categorical variables with a category of 1 value, echo=FALSE}
+var_cat_val1 %>%
+  paste0(collapse=', ') %>%
+  cat()
+```
+
+```{r Pair-wise distribution of categorical variables, include=FALSE}
+pairwise_cat_sum <-
+  ms_added_data |>
+  select_if(
+    !sapply(ms_added_data, is.numeric)
+    & !colnames(ms_added_data) %in% var_cat_val1
+  ) |>
+  colnames() |>
+  combn(2) |>
+  as.data.frame() |>
+  lapply(
+    \(x)
+    ms_added_data |>
+      select_at(x) |>
+      group_by_all() |>
+      summarize(n = n(), .groups = "drop") |>
+      select_at(c(x, "n")) |>
+      `colnames<-`(c("V1_value", "V2_value", "n")) |>
+      mutate(V1 = x[1], V2 = x[2])
+  ) |>
+  lapply(
+    \(x)
+    expand.grid(
+      V1_value = unique(x$V1_value)
+      ,V2_value = unique(x$V2_value)
+      ) |>
+      mutate_all(as.character) |>
+      left_join(x, by = join_by(V1_value, V2_value)) |>
+      mutate_at("n", \(x) ifelse(is.na(x), 0, x)) |>
+      fill(V1, V2)
+  ) |>
+  reduce(rbind) |>
+  select(V1, V1_value, V2, V2_value, everything())
+```
+
+```{r Pair-wise perfect separation, include=FALSE}
+pairwise_cat_sum_ps <-
+  pairwise_cat_sum |>
+  group_by(V1, V2) |>
+  summarize(ps = any(n == 0), .groups = "drop")
+```
+
+```{r table-6, echo=FALSE}
+pairwise_cat_sum |>
+  inner_join(
+    pairwise_cat_sum_ps |>
+      filter(ps) |>
+      select(-ps)
+    ,by = join_by(V1, V2)
+  ) |>
+  filter(n == 0) |>
+  kable(
+    format = kable_format
+    ,caption =
+      paste0(
+        "Table 6. Categorical variables with "
+        ,"pair-wise perfect separation."
+      )
+  ) |>
+  kable_classic()
+```
+
+```{r Conduct correlation tests for each pair with PS, include=FALSE}
+correlation_matrix_ps <-
+  ms_added_data |>
+  colnames() |>
+  setdiff(var_cat_val1) |>
+  combn(2) |>
+  as.data.frame() |>
+  t() |>
+  as.data.frame() |>
+  `rownames<-`(NULL) |>
+  filter(
+    paste0(V1, V2)
+    %in% c(
+      pairwise_cat_sum_ps |>
+        filter(ps) |>
+        unite(V1V2, V1, V2, sep = "") |>
+        pull(V1V2)
+    )
+  ) |>
+  filter(str_remove_all(V1, "^ms_") != str_remove_all(V2, "^ms_")) |>
+  pmap(\(V1, V2) list(V1 = V1, V2 = V2)) |>
+  pblapply(
+    \(x)
+    suppressWarnings(auto_stat_tests(
+        ms_added_data[[x$V1]]
+        ,ms_added_data[[x$V2]]
+        ,perfect_separation = TRUE
+      )) |>
+      list() |>
+      `names<-`("obj") |>
+      c(list(V1 = x$V1, V2 = x$V2))
+  ) |>
+  lapply(
+    \(x)
+    suppressWarnings(tidy(x$obj)) |>
+      filter(!str_detect(term, "\\(Intercept\\)")) |>
+      filter(!(conf.low <= 0 & conf.high >= 0)) |>
+      summarize(n_sig = n()) |>
+      mutate(p.value = ifelse(n_sig > 0, 0, 1)) |>
+      filter(!is.na(p.value)) |>
+      select(p.value) |>
+      mutate(
+        V1 = x$V1
+        ,V2 = x$V2
+      )
+  ) |>
+  reduce(rbind)
+```
+
+```{r Conduct correlation tests for each pair without PS, include=FALSE}
+correlation_matrix_non_ps <-
+  ms_added_data |>
+  colnames() |>
+  setdiff(var_cat_val1) |>
+  combn(2) |>
+  as.data.frame() |>
+  t() |>
+  as.data.frame() |>
+  `rownames<-`(NULL) |>
+  filter(
+    !paste0(V1, V2)
+    %in% c(
+      pairwise_cat_sum_ps |>
+        filter(ps) |>
+        unite(V1V2, V1, V2, sep = "") |>
+        pull(V1V2)
+    )
+  ) |>
+  filter(str_remove_all(V1, "^ms_") != str_remove_all(V2, "^ms_")) |>
+  pmap(
+    \(V1, V2)
+    suppressWarnings(auto_stat_tests(
+        ms_added_data[[V1]]
+        ,ms_added_data[[V2]]
+        ,normal_V1 = !V1 %in% var_num_non_normal_after_trans
+        ,normal_V2 = !V2 %in% var_num_non_normal_after_trans
+      )) |>
+      tidy() |>
+      filter(!is.na(p.value)) |>
+      select(p.value) |>
+      mutate(
+        V1 = V1
+        ,V2 = V2
+      )
+  ) |>
+  reduce(rbind)
+```
+
+```{r Conduct correlation tests for each pair, include=FALSE}
+correlation_matrix <-
+  correlation_matrix_ps |>
+  rbind(correlation_matrix_non_ps) |>
+  mutate(p.value = p.adjust(p.value, "BH")) |>
+  rename(cor.p.value = p.value) |>
+  right_join(
+    ms_added_data |>
+      colnames() |>
+      combn(2) |>
+      as.data.frame() |>
+      t() |>
+      as.data.frame() |>
+      `rownames<-`(NULL)
+    ,by = join_by(V1, V2)
+  ) |>
+  mutate(
+    V1 = factor(V1, colnames(ms_added_data))
+    ,V2 = factor(V2, levels(V1))
+  ) |>
+  arrange(V1, V2)
+```
+
+```{r figure-2, echo=FALSE, fig.height=5, fig.width=7}
+same_v_corr_df =
+  data.frame(
+    cor.p.value = 0
+    ,V1 = colnames(ms_added_data)
+    ,V2 = colnames(ms_added_data)
+    ,sig = "2 - Significant"
+  )
+
+correlation_matrix |>
+  mutate(
+    V1 = factor(V1, rev(levels(V1)))
+    ,sig =
+      ifelse(
+        is.na(cor.p.value)
+        ,ifelse(
+          str_remove_all(V1, "^ms_") == str_remove_all(V2, "^ms_")
+          ,"3 - Not tested†"
+          ,ifelse(
+            V1 %in% var_cat_val1
+            | V2 %in% var_cat_val1
+            ,"4 - Not tested‡"
+            ,"5 - Not tested§"
+          )
+        )
+        ,ifelse(cor.p.value <= 0.05, "2 - Significant", "1 - Not significant")
+      ) |>
+      factor()
+    ,sig = factor(sig)
+    ,cor.p.value = ifelse(cor.p.value<0.001, "<0.001", round(cor.p.value,3))
+  ) |>
+  rbind(same_v_corr_df) |>
+  ggplot(aes(V1, V2, fill = sig)) +
+  geom_tile(color = "white", na.rm = TRUE) +
+  # geom_text(aes(label = cor.p.value), size = 2.5, na.rm = TRUE) +
+  geom_tile(data = same_v_corr_df, fill = "white") +
+  geom_text(
+    data =
+      same_v_corr_df |>
+      left_join(rename(colname_label, V1 = colname), by = join_by(V1))
+    ,aes(label = label)
+    ,size = 2.5
+    ,angle = 70
+    ,hjust = 1
+    ,nudge_x = 0.3
+    ,nudge_y = 0.3
+  ) +
+  coord_flip() +
+  xlab("") +
+  ylab("") +
+  scale_fill_discrete("Significance*") +
+  theme(
+    panel.grid = element_blank()
+    ,panel.border = element_blank()
+    ,axis.ticks = element_blank()
+    ,axis.text = element_blank()
+  )
+```
+
+```{r Write pairs with significant correlations, eval=FALSE, include=FALSE}
+correlation_matrix |>
+  filter(cor.p.value <= 0.05) |>
+  filter(
+    !(V1 %in% paste0(var_num_non_normal, "_trans")
+      | V2 %in% paste0(var_num_non_normal, "_trans")
+    )
+  ) |>
+  select(V1, V2) |>
+  write_csv("inst/extdata/correlation.csv")
+```
+
+# Correlation direction
+
+```{r Prompt template to identify corr direction, include=FALSE}
+correlation_direction_prompt_template <-
+  read_csv(
+    "inst/extdata/correlation_direction_prompt_template.csv"
+    ,show_col_types = FALSE
+  )
+```
+
+```{r Write variables to be defined, eval=FALSE, include=FALSE}
+correlation_matrix |>
+  filter(
+    !(V1 %in% paste0(var_num_non_normal, "_trans")
+      | V2 %in% paste0(var_num_non_normal, "_trans")
+    )
+  ) |>
+  select(V1, V2) |>
+  gather() |>
+  select(variable = value) |>
+  unique() |>
+  arrange(variable) |>
+  write_csv("inst/extdata/variable_undefined.csv")
+```
+
+```{r Define variables, include=FALSE}
+variable_definition <-
+  read_csv(
+    "inst/extdata/variable_defined.csv"
+    ,show_col_types = FALSE
+  )
+```
+
+```{r table-7, echo=FALSE}
+correlation_matrix |>
+  filter(!(str_detect(V1, "^ms_") | str_detect(V2, "^ms_"))) |>
+  filter(
+    !(V1 %in% paste0(var_num_non_normal, "_trans")
+      | V2 %in% paste0(var_num_non_normal, "_trans")
+    )
+  ) |>
+  filter(cor.p.value <= 0.05) |>
+  select(V1, V2) |>
+  left_join(
+    variable_definition |>
+      rename(V1 = variable, V1_definition = definition)
+    ,by = join_by(V1)
+  ) |>
+  left_join(
+    variable_definition |>
+      rename(V2 = variable, V2_definition = definition)
+    ,by = join_by(V2)
+  ) |>
+  t() |>
+  as.data.frame() |>
+  imap(
+    ~ correlation_direction_prompt_template |>
+      mutate_all(str_replace_all, "\\<Var1\\>Variable 1\\</Var1\\>", .x[1]) |>
+      mutate_all(str_replace_all, "\\<Var2\\>Variable 2\\</Var2\\>", .x[2]) |>
+      mutate_all(
+        str_replace_all
+        ,"\\<Definition1\\>Definition 1\\</Definition1\\>"
+        ,.x[3]
+      ) |>
+      mutate_all(
+        str_replace_all
+        ,"\\<Definition2\\>Definition 2\\</Definition2\\>"
+        ,.x[4]
+      ) |>
+      mutate(
+        V1 = .x[1]
+        ,V2 = .x[2]
+      ) |>
+      select(V1, V2, everything())
+  ) |>
+  reduce(rbind) |>
+  mutate_at(c("V1", "V2"), \(x) factor(x, unique(x))) |>
+  mutate_at("type", map_chr, ~ paste0("prompt_", .x)) |>
+  spread(type, prompt) |>
+  mutate_all(str_replace_all, "\\\\n", "<br>") |>
+  kable(
+    format = kable_format
+    ,escape = FALSE
+    ,caption =
+      paste0(
+        "Table 7. Prompts to identify "
+        ,"hypothetical directions of the correlations."
+      )
+  ) |>
+  kable_classic() |>
+  column_spec(1:3, extra_css = "vertical-align: top;")
+```
+
+```{r LLM responses of hypothetical direction of correlation, include=FALSE}
+correlation_direction_response <-
+  # 2024-08-16
+  read_csv(
+    "inst/extdata/correlation_direction_response.csv"
+    ,show_col_types = FALSE
+  ) |>
+  
+  # 2024-08-26
+  rbind(
+    read_csv(
+      "inst/extdata/correlation_direction_response2.csv"
+      ,show_col_types = FALSE
+    )
+  )
+```
+
+```{r table-8, echo=FALSE}
+correlation_direction_response |>
+  kable(
+    format = kable_format
+    ,caption =
+      paste0(
+        "Table 8. ChatGPT-4 response to identify "
+        ,"hypothetical directions of the correlations."
+      )
+  ) |>
+  kable_classic() |>
+  column_spec(1:3, extra_css = "vertical-align: top;")
+```
+
+```{r Determine hypothetical direction of correlation, include=FALSE}
+correlation_direction <-
+  correlation_direction_response |>
+  mutate(
+    answer =
+      response |>
+      lapply(\(x) str_split(x, "\n\n")[[1]]) |>
+      lapply(\(x) x[length(x)]) |>
+      lapply(\(x) paste0(str_extract_all(x, "[ABC][:graph:]*$")[[1]])) |>
+      lapply(paste0, collapse = " - ") |>
+      lapply(\(x) paste0(str_extract_all(x, "[ABC]")[[1]])) |>
+      sapply(unique)
+  ) |>
+  mutate(
+    direction =
+      case_when(
+        answer == "A" ~ "->"
+        ,answer == "B" ~ "<-"
+        ,answer == "C" ~ "-o-"
+      )
+  ) |>
+  select(V1, V2, answer, direction)
+```
+
+```{r Create graph data frame based on hypothetical direction, include=FALSE}
+correlation_graph_df <-
+  correlation_direction |>
+  mutate(
+    from = ifelse(direction == "->", V1, V2)
+    ,to = ifelse(direction == "->", V2, V1)
+  ) |>
+  select(from, to)
+```
+
+```{r Create graph plot based on hypothetical direction, include=FALSE}
+correlation_graph_plot <-
+  correlation_graph_df |>
+  graph_from_data_frame() |>
+  ggnetwork(
+    layout=
+      layout_as_tree(
+        graph_from_data_frame(correlation_graph_df)
+        ,root = c()
+        ,mode = "in"
+        ,circular = TRUE
+      )
+    ,arrow.gap = 0.075
+  )
+
+correlation_graph_plot <-
+  correlation_graph_plot |>
+  ggplot(aes(x, y, xend = xend, yend = yend, color = name, fill = name)) +
+  geom_edges(
+    arrow = arrow(length = unit(4, "pt"), type="closed")
+    ,curvature = 0.1
+    ,linewidth = 0.5
+    ,show.legend = FALSE
+  ) +
+  geom_nodelabel(
+    aes(label = name)
+    ,color = "white"
+    ,size = 2
+    ,show.legend = FALSE
+  ) +
+  scale_x_continuous(
+    limits =
+      c(min(correlation_graph_plot$x) - 0.05
+        ,max(correlation_graph_plot$xend) + 0
+      )
+  ) +
+  scale_y_continuous(
+    limits =
+      c(min(correlation_graph_plot$y) - 0
+        ,max(correlation_graph_plot$yend) + 0
+      )
+  ) +
+  theme_void()
+```
+
+```{r figure-3, echo=FALSE, fig.height=3.5, fig.width=3.5}
+correlation_graph_plot
+```
+
+# Missing value imputation
+
+```{r Imputation predictor matrix, include=FALSE}
+imp_predictor_matrix <-
+  correlation_matrix |>
+  filter(!is.na(cor.p.value)) |>
+  mutate(imp_predictor = ifelse(cor.p.value <= 0.05, 1, 0)) |>
+  select(V1, V2, imp_predictor) |>
+  mutate_at(c("V1", "V2"), str_remove_all, "^ms_") |>
+  unique() |>
+  right_join(
+    expand.grid(
+      V1 = colnames(outlier_removed_data)
+      ,V2 = colnames(outlier_removed_data)
+      ,stringsAsFactors = FALSE
+    )
+    ,by = join_by(V1, V2)
+  ) |>
+  mutate(imp_predictor = ifelse(V1 == V2, 0, imp_predictor)) |>
+  pmap(
+    \(V1, V2, imp_predictor)
+    data.frame(
+      V1_V2 =
+        sort(c(V1, V2)) |>
+        paste0(collapse = "|")
+      ,imp_predictor = imp_predictor
+    )
+  ) |>
+  reduce(rbind) |>
+  separate(V1_V2, c("V1", "V2"), sep = "\\|") |>
+  group_by(V1, V2) |>
+  summarize(
+    imp_predictor = as.integer(sum(imp_predictor, na.rm = TRUE) > 0)
+    ,.groups = "drop"
+  ) |>
+  spread(V2, imp_predictor, fill = 0) |>
+  column_to_rownames(var = "V1") |>
+  as.matrix()
+
+imp_predictor_matrix <-
+  imp_predictor_matrix[
+    colnames(outlier_removed_data)
+    ,colnames(outlier_removed_data)
+  ]
+```
+
+```{r Performing multiple imputation, include=FALSE}
+imp_results <-
+  suppressWarnings(
+    mice(
+      data = outlier_removed_data
+      ,method = 'pmm'
+      ,m = 10
+      ,seed = seed
+      ,predictorMatrix = imp_predictor_matrix
+      ,print = FALSE
+    )
+  )
+```
+
+```{r Obtain imputed data, include=FALSE}
+imputed_data <- complete(imp_results, 1)
+```
+
+# Descriptive statistics
+
+```{r Finalize readily-analyzed data, include=FALSE}
+processed_data <-
+  imputed_data |>
+  mutate_if(is.character, as.factor)
+```
+
+```{r Determine variables, include=FALSE}
+var <- list()
+
+var$dependent <- "fatigue"
+
+var$independent <- c("hba1c", "hba1c_trans")
+
+var$covariates=
+  processed_data %>%
+  colnames() %>%
+  setdiff(unlist(var))
+```
+
+```{r Outcome-wise average and SD, include=FALSE}
+avg_sd_data <-
+  processed_data |>
+  select_if(is.numeric) |>
+  mutate(seq = seq(n())) |>
+  gather(variable, value, -seq) |>
+  left_join(
+    processed_data |>
+      select_at(var$dependent) |>
+      mutate(seq = seq(n()))
+    ,by = join_by(seq)
+  ) |>
+  group_by_at(c(var$dependent, "variable")) |>
+  summarize(
+    avg = mean(value)
+    ,std = sd(value)
+    ,.groups = 'drop'
+  )
+```
+
+```{r Outcome-wise proportion, include=FALSE}
+prop_n_data=
+  processed_data |>
+  select_at(reduce(var[!names(var) %in% "dependent"], c)) |>
+  select_if(\(x) !is.numeric(x)) |>
+  mutate_all(as.character) |>
+  mutate(seq = seq(n())) |>
+  gather(variable, value, -seq) |>
+  left_join(
+    processed_data |>
+      select_at(var$dependent) |>
+      mutate(seq=seq(n()))
+    ,by = join_by(seq)
+  ) |>
+  select(-seq) |>
+  group_by_at(c(var$dependent, "variable", "value")) |>
+  summarize(n = n(), .groups='drop') |>
+  group_by_at(c(var$dependent, "variable")) |>
+  mutate(total = sum(n)) |>
+  ungroup() |>
+  mutate(p = round(n / total * 100, 0))
+```
+
+```{r table-9, echo=FALSE}
+desc_stats <-
+  list(
+    avg_sd_data |>
+      mutate_at(c("avg", "std"), round, 2) |>
+      mutate(std = paste0("(", as.character(std), ")")) |>
+      unite(avg_std, avg, std, sep=" ") |>
+      mutate(value = NA) |>
+      rename(summary = avg_std)
+    ,prop_n_data |>
+      select(-total) |>
+      mutate(n = paste0("(", as.character(n), ")")) |>
+      unite(p_n, p, n, sep = " ") |>
+      rename(summary = p_n)
+  ) |>
+  lapply(rename_at, var$dependent, \(x) "dep_var") |>
+  lapply(spread, dep_var, summary, fill = "0 (0)") |>
+  reduce(rbind) |>
+  mutate_at("value", as.character) |>
+  mutate_at(
+    "value"
+    ,\(x) ifelse(is.na(x), "average (SD)", paste0(x," % (n)"))
+  ) |>
+  arrange(factor(variable, reduce(var[!names(var) %in% "dependent"], c))) |>
+  mutate(variable = ifelse(duplicated(variable), "", variable))
+
+desc_stats <-
+  desc_stats |>
+  `colnames<-`(
+    data.frame(variable = colnames(desc_stats)) |>
+      left_join(
+        prop_n_data |>
+          select_at(c(var$dependent, "total")) |>
+          `colnames<-`(c("variable","total")) |>
+          unique()
+        ,by = join_by(variable)
+      ) |>
+      mutate_at("total", \(x) ifelse(is.na(x), "", paste0(" (n=", x, ")"))) |>
+      unite(variable_total, variable, total, sep = "") |>
+      pull(variable_total)
+  )
+
+desc_stats |>
+  kable(
+    format = kable_format
+    ,caption = "Table 9. Sample characteristics."
+  ) |>
+  kable_classic()
+```
+
+# Univariate regression analysis
+
+```{r Conduct univariate regression analysis, include=FALSE}
+univar_reg <-
+  processed_data |>
+  colnames() |>
+  setdiff(var$dependent)
+
+univar_reg <-
+  univar_reg |>
+  `names<-`(univar_reg) |>
+  lapply(c, var$dependent) |>
+  lapply(rev) |>
+  lapply(paste0, collapse='~') |>
+  lapply(as.formula) |>
+  lapply(glm, family = binomial(), data = processed_data) |>
+  lapply(tidy) |>
+  imap( ~ mutate(.x, variable = .y)) |>
+  reduce(rbind) |>
+  select(variable, everything()) |>
+  mutate(
+    term = str_remove_all(term, variable)
+    ,term = ifelse(term == "", "value", term)
+    ,OR = exp(estimate)
+    ,LB = exp(estimate - qnorm(0.975) * std.error)
+    ,UB = exp(estimate + qnorm(0.975) * std.error)
+  )
+```
+
+```{r table-10, echo=FALSE}
+univar_reg  |>
+  filter(term != "(Intercept)") |>
+  select_at(c("variable", "term", "OR", "LB", "UB", "p.value")) |>
+  mutate_at(3:6, round, 3) |>
+  mutate(variable = paste0(variable, ifelse(p.value <= 0.05, "*", ""))) |>
+  arrange(p.value) |>
+  mutate(
+    p.value =
+      ifelse(p.value < 0.001, "<0.001", round(p.value, 3)) |>
+      as.character()
+  ) |>
+  kable(
+    format = kable_format
+    ,caption = "Table 10. Univariate regression analysis."
+  ) |>
+  footnote("*, p-value <= 0.05.") |>
+  kable_classic()
+```
+
+```{r Filter significant univariate regression, include=FALSE}
+univar_reg_sig <-
+  univar_reg |>
+  filter(term != '(Intercept)') |>
+  filter(p.value <= 0.05) |>
+  arrange(p.value)
+```
+
+```{r Obtain variables in sig uni reg results, include=FALSE}
+univar_reg_sig_var <-
+  univar_reg_sig |>
+  pull(variable) |>
+  unique()
+```
+
+# Multivariate regression analysis
+
+```{r Determine adjustment, include=FALSE}
+multivar_adjustment <-
+  correlation_graph_df |>
+  filter(from %in% univar_reg_sig_var & to %in% univar_reg_sig_var) |>
+  right_join(data.frame(to = univar_reg_sig_var), by = join_by(to)) |>
+  group_by(to) |>
+  mutate(seq = seq(n())) |>
+  rbind(
+    univar_reg_sig |>
+      select(to = variable) |>
+      mutate(seq = 0, from = to)
+  ) |>
+  arrange(to, seq) |>
+  mutate(
+    from = 
+      ifelse(
+        str_remove_all(to, "_trans$") %in% var_num_non_normal_after_trans
+        ,from
+        ,ifelse(
+          from %in% var_num_non_normal_after_trans
+          ,paste0(from, "_trans")
+          ,from
+        )
+      )
+  ) |>
+  group_by(to) |>
+  summarize(covariates = paste0(from[!is.na(from)], collapse = "+")) |>
+  rename(variable = to) |>
+  mutate(formula = paste0(var$dependent, "~", covariates)) |>
+  mutate(covariates = str_remove_all(covariates, paste0(variable, "\\+*"))) |>
+  arrange(factor(variable, unique(univar_reg_sig$variable)))
+```
+
+```{r Conduct multivariate regression analysis, include=FALSE}
+multivar_reg <-
+  multivar_adjustment |>
+  pull(formula) |>
+  `names<-`(multivar_adjustment$variable) |>
+  lapply(as.formula) |>
+  lapply(glm, family = binomial(), data = processed_data) |>
+  lapply(tidy) |>
+  imap(~ mutate(.x, variable = .y)) |>
+  reduce(rbind) |>
+  select(variable, everything()) |>
+  mutate(
+    term = str_remove_all(term, variable)
+    ,term = ifelse(term == "", "value", term)
+    ,OR = exp(estimate)
+    ,LB = exp(estimate - qnorm(0.975) * std.error)
+    ,UB = exp(estimate + qnorm(0.975) * std.error)
+  )
+```
+
+```{r table-11, echo=FALSE}
+multivar_reg  |>
+  filter(term != "(Intercept)") |>
+  group_by(variable) |>
+  slice(1) |>
+  ungroup() |>
+  select_at(c("variable", "term", "OR", "LB", "UB", "p.value")) |>
+  mutate_at(3:6, round, 3) |>
+  left_join(select(multivar_adjustment, -formula), by = join_by(variable)) |>
+  select(variable, covariates, everything()) |>
+  mutate(variable = paste0(variable, ifelse(p.value <= 0.05, "*", ""))) |>
+  arrange(p.value) |>
+  mutate(
+    p.value =
+      ifelse(p.value<0.001, "<0.001", round(p.value,3)) |>
+      as.character()
+  ) |>
+  kable(
+    format = kable_format
+    ,caption = "Table 2. Multivariate regression analysis."
+  ) |>
+  footnote("*, p-value <=0.05.") |>
+  kable_classic()
+```
+
+```{r Filter significant multivariate regression, include=FALSE}
+multivar_reg_sig <-
+  multivar_reg  |>
+  filter(term != "(Intercept)") |>
+  group_by(variable) |>
+  slice(1) |>
+  ungroup() |>
+  filter(p.value <= 0.05) |>
+  arrange(p.value)
+```
+
+```{r Obtain variables in sig multi reg results, include=FALSE}
+multivar_reg_sig_var <-
+  multivar_reg_sig$variable |>
+  unique()
+```
+
+# Mediation analysis
+
+```{r Determine adjustment with each mediator, include=FALSE}
+multivar_adjustment_mediator=
+  correlation_graph_df |>
+  filter(from %in% multivar_reg_sig_var & to %in% multivar_reg_sig_var) |>
+  select(from, to) |>
+  left_join(
+    multivar_adjustment |>
+      select(from = variable, covariates)
+    ,by = join_by(from)
+  ) |>
+  mutate(
+    from = 
+      ifelse(
+        str_remove_all(to, "_trans$") %in% var_num_non_normal_after_trans
+        ,from
+        ,ifelse(
+          from %in% var_num_non_normal_after_trans
+          ,paste0(from, "_trans")
+          ,from
+        )
+      )
+  ) |>
+  group_by(from, covariates) |>
+  mutate(seq = seq(n())) |>
+  ungroup()
+
+multivar_adjustment_mediator <-
+  multivar_adjustment_mediator |>
+  rbind(
+    group_by(multivar_adjustment_mediator, from, covariates) |>
+      summarize(
+        to = paste0(to[!is.na(to)], collapse="+")
+        ,seq = max(seq) + 1
+        ,.groups = "drop"
+      )
+  ) |>
+  arrange(from, seq) |>
+  rename(variable = from) |>
+  rename(mediators = to) |>
+  rename(confounders = covariates) |>
+  mutate(
+    formula=
+      paste0(
+        var$dependent
+        ,"~"
+        ,mapply(
+          \(x,y,z) paste0(c(x,y,z)[c(x,y,z) != ""], collapse="+")
+          ,variable
+          ,confounders
+          ,mediators
+        )
+      )
+  ) |>
+  select(variable, confounders, mediators, formula) |>
+  unique() |>
+  arrange(factor(variable, unique(multivar_reg_sig$variable)))
+```
+
+```{r Conduct mediation analysis, include=FALSE}
+mediation <-
+  multivar_adjustment_mediator |>
+  pull(formula) |>
+  `names<-`(
+    paste0(
+      multivar_adjustment_mediator$variable
+      ,"|"
+      ,multivar_adjustment_mediator$mediators
+    )
+  ) |>
+  lapply(as.formula) |>
+  lapply(glm, family = binomial(), data = processed_data) |>
+  `names<-`(
+    paste0(
+      multivar_adjustment_mediator$variable
+      ,"|"
+      ,multivar_adjustment_mediator$mediators
+    )
+  ) |>
+  lapply(tidy) |>
+  imap(~ mutate(.x, variable = .y)) |>
+  reduce(rbind) |>
+  select(variable, everything()) |>
+  separate(variable, c("variable", "mediators"), sep="\\|") |>
+  mutate(
+    term = str_remove_all(term, variable)
+    ,term = ifelse(term == "", "value", term)
+    ,OR = exp(estimate)
+    ,LB = exp(estimate - qnorm(0.975) * std.error)
+    ,UB = exp(estimate + qnorm(0.975) * std.error)
+  )
+```
+
+```{r table-12, echo=FALSE}
+mediation  |>
+  filter(term != "(Intercept)") |>
+  group_by(variable, mediators) |>
+  slice(1) |>
+  ungroup() |>
+  select_at(c("variable", "mediators", "term", "OR", "LB", "UB", "p.value")) |>
+  mutate_at(4:7, round, 3) |>
+  left_join(select(multivar_adjustment, -formula), by=join_by(variable)) |>
+  select(variable, covariates, everything()) |>
+  mutate(variable = paste0(variable, ifelse(p.value<=0.05,"*",""))) |>
+  arrange(p.value) |>
+  mutate(
+    p.value=
+      ifelse(p.value<0.001, "<0.001", round(p.value,3)) |>
+      as.character()
+  ) |>
+  kable(
+    format = kable_format
+    ,caption = "Table 3. Mediation analysis."
+  ) |>
+  footnote("*, p-value <=0.05.") |>
+  kable_classic()
+```
+
+# Predictive modeling
+
+
+
+
+
+
+
+
+
+
