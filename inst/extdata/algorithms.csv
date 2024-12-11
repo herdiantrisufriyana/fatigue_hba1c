@@ -1,0 +1,9 @@
+algorithm,name
+rr,Ridge Regression
+nb,Naive Bayes
+svm,Support Vector Machine
+knn,k-Nearest Neighbor
+dt,Decision Tree
+rf,Random Forest
+gbm,Gradient Boosting Machine
+dnn,Deep Neural Network
