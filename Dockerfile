@@ -70,6 +70,7 @@ RUN R -e "BiocManager::install('brms', ask=FALSE, update=FALSE, force=TRUE)"
 RUN R -e "BiocManager::install('broom.mixed', ask=FALSE, update=FALSE, force=TRUE)"
 RUN R -e "BiocManager::install('pbapply', ask=FALSE, update=FALSE, force=TRUE)"
 RUN R -e "BiocManager::install('mice', ask=FALSE, update=FALSE, force=TRUE)"
+RUN /opt/conda/bin/conda install -y shap=0.42.1
 
 # Set the working directory to ~/project on R session start
 RUN echo 'setwd("~/project")' >> /home/rstudio/.Rprofile
