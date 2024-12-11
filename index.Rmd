@@ -1521,7 +1521,7 @@ multivar_reg_sig_var <-
 # Mediation analysis
 
 ```{r Determine adjustment with each mediator, include=FALSE}
-multivar_adjustment_mediator=
+multivar_adjustment_mediator <-
   correlation_graph_df |>
   filter(from %in% multivar_reg_sig_var & to %in% multivar_reg_sig_var) |>
   select(from, to) |>
@@ -1637,9 +1637,319 @@ mediation  |>
   kable_classic()
 ```
 
+```{r Filter significant multi reg for mediation analysis, include=FALSE}
+multivar_reg_mediator_sig <-
+  mediation  |>
+  filter(term != "(Intercept)") |>
+  group_by(variable) |>
+  slice(1) |>
+  ungroup() |>
+  right_join(
+    select(multivar_reg_sig, variable, p.value_multivar = p.value)
+    , by = join_by(variable)
+  ) |>
+  filter(p.value <= 0.05 | is.na(p.value)) |>
+  arrange(p.value_multivar) |>
+  select(-p.value_multivar)
+```
+
+```{r Obtain variables in sig multi reg results for med analysis, include=FALSE}
+multivar_reg_mediator_sig_var <-
+  multivar_reg_mediator_sig$variable |>
+  unique()
+```
+
 # Predictive modeling
 
+```{r Select predictors based on multivar reg analysis, include=FALSE}
+predictors <-
+  multivar_reg_mediator_sig_var[
+    !str_detect(multivar_reg_mediator_sig_var, "_trans$")
+  ]
+```
 
+```{r Determine data for predictive modeling, include=FALSE}
+predmod_data <-
+  processed_data |>
+  select_at(c(var$dependent, predictors)) |>
+  mutate_at(var$dependent, \(x) as.integer(x == levels(x)[1])) |>
+  mutate_if(is.factor, \(x) as.integer(x == levels(x)[2])) |>
+  rename(outcome = fatigue) |>
+  rownames_to_column(var = "id")
+```
+
+```{r Write data for predictive modeling, eval=FALSE, include=FALSE}
+predmod_data |>
+  write_csv("inst/extdata/predmod_data.csv")
+```
+
+```{r Determine machine learning algorithms, include=FALSE}
+algorithms <-
+  read_csv("inst/extdata/algorithms.csv", show_col_types = FALSE) |>
+  mutate_all(\(x) factor(x, unique(x)))
+```
+
+# Model evaluation
+
+```{r Load results of sample size estimation, include=FALSE}
+sample_size_estimation <-
+  algorithms$algorithm |>
+  `names<-`(algorithms$algorithm) |>
+  lapply(
+    \(x)
+    read_csv(
+      paste0("inst/extdata/", x, "/sample_size_estimation.csv")
+      , show_col_types = FALSE
+    )
+  ) |>
+  imap(~ mutate(.x, algorithm = factor(.y, algorithms$algorithm))) |>
+  reduce(rbind)
+```
+
+```{r Fit EPV-AUROC with modified exponential decay, include=FALSE}
+mod_exp_decay <-
+  algorithms$algorithm |>
+  `names<-`(algorithms$algorithm) |>
+  lapply(\(x) filter(sample_size_estimation, algorithm == x)) |>
+  imap(
+    ~ try(
+        nls(
+          auc_roc ~ 1 - a * exp(-k * epv)
+          , data = .x
+          , start = list(a = 1, k = 0.1)
+        )
+      )
+  )
+```
+
+```{r Extract results of EPV-AUROC modified exp decay fitting, include=FALSE}
+mod_exp_decay_results <-
+  mod_exp_decay[sapply(mod_exp_decay, \(x) !is.character(x))] |>
+  lapply(tidy) |>
+  imap(~ mutate(.x, algorithm = factor(.y, algorithms$algorithm))) |>
+  reduce(rbind) |>
+  select(algorithm, term, estimate, p.value) |>
+  mutate(
+    p.value =
+      case_when(
+        p.value < 0.001 ~ "<0.001"
+        ,p.value > 0.05 ~ ">0.05"
+        ,TRUE ~ format(p.value, digits = 1)
+      ) |>
+      paste0(
+        ifelse(term == "k", paste0("\nk=", round(estimate, 3)), "")
+      )
+  ) |>
+  select(-estimate) |>
+  spread(term, p.value)
+```
+
+```{r figure-4, echo=FALSE, fig.height=s, fig.width=7}
+sample_size_estimation |>
+  left_join(
+    mod_exp_decay[sapply(mod_exp_decay, \(x) !is.character(x))] |>
+      lapply(predict) |>
+      imap(
+        ~ data.frame(
+            epv = filter(sample_size_estimation, algorithm == .y)$epv
+            , auc_roc_med = .x
+            , algorithm = factor(.y, algorithms$algorithm)
+          )
+      ) |>
+      reduce(rbind)
+    , by = join_by(epv, algorithm)
+  ) |>
+  left_join(algorithms, by = join_by(algorithm)) |>
+  mutate(name = factor(str_wrap(name, 20), str_wrap(algorithms$name, 20))) |>
+  ggplot(aes(epv, auc_roc)) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  geom_line(aes(y = auc_roc_med), color = "red", na.rm = TRUE) +
+  geom_point() +
+  geom_text(
+    data =
+      mod_exp_decay_results |>
+      left_join(
+        filter(sample_size_estimation, epv == min(epv))
+        , by = join_by(algorithm)
+      ) |>
+      mutate(epv = 10, auc_roc = auc_roc - 0.025) |>
+      left_join(algorithms, by = join_by(algorithm)) |>
+      mutate(name = factor(str_wrap(name, 20), str_wrap(algorithms$name, 20)))
+    , aes(label = paste0("p(a)=", a, "\np(k)=", k))
+    , size = 3, hjust = 0, vjust = -0.1, check_overlap = TRUE
+  ) +
+  facet_wrap(~ name, ncol = 4, scales = "free_y") +
+  xlab("Number of samples with minority class per candidate predictor") +
+  scale_y_continuous(
+    "AUC-ROC"
+    , breaks = seq(0, 1, 0.025)
+    , labels = scales::label_number(accuracy = 0.025)
+  )
+```
+
+Figure 3. Sample size estimation. Red line indicates the modified exponential decay fitting. p(a) is the p-value of a where a is a parameter represents the factor by which the exponential term is scaled in the model and a higher value generally means a quicker initial increase. p(k) is the p-value of k where k is the rate of decay or growth in the exponential term and a positive k implies a decay (as x increases, the impact of increasing y diminishes) while a negative k suggests an erroneous model fit in this context because an increase in x should not lead to a decrease in y.
+
+```{r Select algorithms of which the sample size is sufficient, include=FALSE}
+algo_suff_sampsize <-
+  mod_exp_decay_results |>
+  separate(k, c("k_p.value", "k_estimate"), sep = "\nk=") |>
+  mutate_at(
+    c("a", "k_p.value", "k_estimate")
+    , \(x) suppressWarnings(as.numeric(ifelse(x == "<0.001", 0.001, x)))
+  ) |>
+  filter(a <= 0.05 & k_p.value <= 0.05 & k_estimate >= 0) |>
+  pull(algorithm)
+```
+
+```{r Create empty list for model evaluation, include=FALSE}
+eval <- list()
+```
+
+```{r Obtain the model evaluation data, include=FALSE}
+eval$df <-
+  algo_suff_sampsize |>
+  `names<-`(algo_suff_sampsize) |>
+  lapply(
+    \(x)
+    obtain_obs_pred("predmod_data", "inst/extdata/", paste0("inst/extdata/", x))
+  )
+```
+
+```{r Evaluate calibration, include=FALSE}
+eval$calibration <-
+  eval$df |>
+  lapply(calibration, seed = seed)
+```
+
+```{r Evaluate decision, include=FALSE}
+eval$decision <-
+  eval$df |>
+  lapply(select, -id) |>
+  lapply(decision, seed = seed)
+```
+
+```{r Evaluate discrimination, include=FALSE}
+eval$discrimination <-
+  eval$df |>
+  lapply(select, -id) |>
+  lapply(discrimination, seed = seed)
+```
+
+```{r Determine threshold, eval=FALSE, include=FALSE}
+eval$threshold <-
+  eval$df |>
+  lapply(select, -id) |>
+  lapply(
+    thresholding
+    , standard = FALSE, optimal = FALSE, clinical = TRUE, seed = seed
+  )
+```
+
+```{r Determine threshold, include=FALSE}
+th <-
+  eval$threshold |>
+  lapply(filter, metric == "th") |>
+  lapply(pull, avg)
+```
+
+```{r Evaluate model, include=FALSE}
+eval_plot_df <-
+  algo_suff_sampsize |>
+  as.character() |>
+  `names<-`(algo_suff_sampsize) |>
+  lapply(
+    \(x)
+    list(
+      calibration = eval$calibration[[x]]
+      , decision = eval$decision[[x]]
+      , discrimination = eval$discrimination[[x]]
+    )
+  )
+```
+
+```{r figure-4, fig.height=12, fig.width=10}
+ggarrange(
+  eval_plot_df$knn |>
+    arrange_eval_plot(
+      threshold = th$knn
+      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -60
+      , labels = LETTERS[1:3]
+    )
+  , eval_plot_df$dt |>
+    arrange_eval_plot(
+      threshold = th$dt
+      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -60
+      , labels = LETTERS[4:6]
+    )
+  , eval_plot_df$rf |>
+    arrange_eval_plot(
+      threshold = th$rf
+      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -60
+      , labels = LETTERS[7:9]
+    )
+  , nrow = 3, ncol = 1
+  , heights = c(4, 4, 4)
+)
+```
+
+```{r Obtain pre-computed SHAPs of the models, include=FALSE}
+shap_values <-
+  paste0(
+    "inst/extdata/", algo_suff_sampsize, "/shap_values.csv"
+  ) |>
+  `names<-`(algo_suff_sampsize) |>
+  lapply(read_csv, show_col_types = FALSE)
+```
+
+```{r Combine SHAP with features of the models, include=FALSE}
+shap_feature_values <-
+  shap_values |>
+  lapply(mutate, seq = seq(n())) |>
+  lapply(gather, feature, shap_value, -seq) |>
+  imap(
+    ~ .x |>
+      left_join(
+        predmod_data |>
+          select(-id, -outcome) |>
+          mutate(seq = seq(n())) |>
+          gather(feature, feature_value, -seq)
+        , by = join_by(seq, feature)
+      )
+  ) |>
+  imap(
+    ~ .x |>
+      left_join(
+        eval$df[[.y]] |>
+          mutate(seq = seq(n()))
+        ,by = join_by(seq)
+      )
+  )
+```
+
+```{r figure-5, echo=FALSE, fig.height=7, fig.width=7}
+ggarrange(
+  ggarrange(
+    multivar_reg_sig |>
+      filter(
+        !variable %in% filter(multivar_reg_mediator_sig, !is.na(OR))$variable
+      ) |>
+      rbind(select(filter(multivar_reg_mediator_sig, !is.na(OR)), -mediators)) |>
+      filter(variable %in% predictors) |>
+      reg_analysis_plot()
+    , NULL
+    , nrow = 1, ncol = 2
+    , widths = c(8.75, 1.25)
+  )
+  , shap_feature_values$knn |>
+    shap_beeswarm_plot(seed, transparency = 0.5)
+  , shap_feature_values$dt |>
+    shap_beeswarm_plot(seed, transparency = 0.5)
+  , shap_feature_values$rf |>
+    shap_beeswarm_plot(seed, transparency = 0.5)
+  , nrow = 4, ncol = 1
+  , heights = c(2, 2, 2, 2)
+)
+```
 
 
 
