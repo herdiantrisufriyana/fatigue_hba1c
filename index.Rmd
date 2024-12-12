@@ -1835,7 +1835,7 @@ eval$discrimination <-
   lapply(discrimination, seed = seed)
 ```
 
-```{r Determine threshold, eval=FALSE, include=FALSE}
+```{r Determine threshold, include=FALSE}
 eval$threshold <-
   eval$df |>
   lapply(select, -id) |>
@@ -1872,19 +1872,19 @@ ggarrange(
   eval_plot_df$knn |>
     arrange_eval_plot(
       threshold = th$knn
-      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -60
+      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -70
       , labels = LETTERS[1:3]
     )
   , eval_plot_df$dt |>
     arrange_eval_plot(
       threshold = th$dt
-      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -60
+      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -70
       , labels = LETTERS[4:6]
     )
   , eval_plot_df$rf |>
     arrange_eval_plot(
       threshold = th$rf
-      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -60
+      , dc_xby = 0.2, dc_ymax = 0.5, dc_yby = 0.1, dc_ta_angle = -70
       , labels = LETTERS[7:9]
     )
   , nrow = 3, ncol = 1
@@ -1928,18 +1928,21 @@ shap_feature_values <-
 
 ```{r figure-5, echo=FALSE, fig.height=7, fig.width=7}
 ggarrange(
-  ggarrange(
-    multivar_reg_sig |>
-      filter(
-        !variable %in% filter(multivar_reg_mediator_sig, !is.na(OR))$variable
-      ) |>
-      rbind(select(filter(multivar_reg_mediator_sig, !is.na(OR)), -mediators)) |>
-      filter(variable %in% predictors) |>
-      reg_analysis_plot()
-    , NULL
-    , nrow = 1, ncol = 2
-    , widths = c(8.75, 1.25)
-  )
+  multivar_reg_sig |>
+    filter(
+      !variable %in% filter(multivar_reg_mediator_sig, !is.na(OR))$variable
+    ) |>
+    rbind(select(filter(multivar_reg_mediator_sig, !is.na(OR)), -mediators)) |>
+    filter(variable %in% predictors) |>
+    mutate(type = "SCM") |>
+    rbind(
+      eval$df |>
+        imap(~ obtain_model_feature_effect_size(.x, th = th[[.y]])) |>
+        imap(~ mutate(.x, type = str_to_upper(.y))) |>
+        reduce(rbind)
+    ) |>
+    mutate_at("type", \(x) factor(x, unique(x))) |>
+    reg_analysis_plot(strata = "type")
   , shap_feature_values$knn |>
     shap_beeswarm_plot(seed, transparency = 0.5)
   , shap_feature_values$dt |>
@@ -1948,9 +1951,470 @@ ggarrange(
     shap_beeswarm_plot(seed, transparency = 0.5)
   , nrow = 4, ncol = 1
   , heights = c(2, 2, 2, 2)
+  , labels = LETTERS[1:4]
 )
 ```
 
+Figure 5. Model explainability: (A) regression analysis of the predictors; (B) SHAP beeswarm plot of KNN; (C) SHAP beeswarm plot of DT; and (D) SHAP beeswarm plot of RF. DM, diabetes mellitus; DT, decision tree; KNN, k-nearest neighbor; OR, odds ration; RF, random forest; SCM, structural causal model; SHAP, Shapley additive explanation.
+
+```{r Compute CM using the threshold, include=FALSE}
+eval$cm <-
+  eval$df |>
+  imap(
+    ~ thresholding(
+        .x
+        , custom_metric = "th", custom_ref = th[[.y]]
+        , standard = FALSE, optimal = FALSE, clinical = FALSE, seed = seed
+      )
+  )
+```
+
+```{r Summarize confusion matrix, include=FALSE}
+cm_summary <-
+  eval[c("calibration", "decision", "discrimination")] |>
+  lapply(\(x) reduce(imap(x, ~ mutate(.x$metrics, model = .y)), rbind)) |>
+  reduce(rbind) |>
+  filter(term %in% c("AUC-ROC")) |>
+  mutate(lb = estimate - ci, ub = estimate + ci) |>
+  select(-ci) |>
+  select(model, metric = term, avg = estimate, everything()) |>
+  rbind(
+    eval$cm |>
+      imap(~ mutate(.x, model = .y)) |>
+      reduce(rbind) |>
+      filter(ref_type == "TH" & !metric %in% c("th", "nb")) |>
+      mutate(metric = str_to_upper(metric)) |>
+      select(-ref_type, -ref_value) |>
+      select(model, metric, avg, everything())
+  ) |>
+  mutate_at(c("avg", "lb", "ub"), format, digits = 2) |>
+  unite(ci, lb, ub, sep = ", ") |>
+  mutate_at("ci", \(x) paste0("(", x, ")")) |>
+  unite(summary, avg, ci, sep = " ") |>
+  mutate(
+    model = factor(model, unique(model))
+    , metric = factor(metric, c("AUC-ROC", "F1", "TNR", "TPR", "PPV", "NPV"))
+  ) |>
+  spread(metric, summary) |>
+  left_join(
+    reduce(imap(th, ~ data.frame(model = .y, TH = .x)), rbind)
+    , by = join_by(model)
+  ) |>
+  select(model, `AUC-ROC`, TH, everything())
+```
+
+```{r table-13, echo=FALSE}
+cm_summary |>
+  mutate_at("model", str_to_upper) |>
+  rename(Model = model) |>
+  kable(
+    caption = "Table 13. Predictive performance."
+    , format = kable_format
+  ) |>
+  footnote(
+    paste0(
+      "AUC-ROC, area under the curve - receiver operating characteristics; "
+      , "DT, decision tree; "
+      , "F1, the F1-score; "
+      , "KNN, k-nearest neighbor; "
+      , "TH, the chosen threshold, balanced sensitivity and specificity; "
+      , "NPV, negative predictive value; "
+      , "PPV, positive predictive value (precision); "
+      , "RF, random forest; "
+      , "TNR, true negative rate (specificity); "
+      , "TPR, true positive rate (sensitivity/recall)."
+    )
+  ) |>
+  kable_classic() |>
+  column_spec(1:7, extra_css = "vertical-align:top;")
+```
+
+```{r Determine best_model, include=FALSE}
+best_model <- as.character(algo_suff_sampsize[3])
+```
+
+```{r Classify confusion matrix by the best model, include=FALSE}
+best_model_cm <-
+  eval$df[[best_model]] |>
+  mutate(pred = factor(as.integer(pred >= th[[best_model]]))) |>
+  mutate(
+    cm =
+      case_when(
+        obs == 1 & pred == 1 ~ "TP"
+        , obs == 1 & pred == 0 ~ "FN"
+        , obs == 0 & pred == 1 ~ "FP"
+        , obs == 0 & pred == 0 ~ "TN"
+      ) |>
+      factor(c("TP", "FP", "TN", "FN"))
+  ) |>
+  select(id, cm) |>
+  column_to_rownames(var = "id")
+```
+
+```{r Fit PCA model using unused variables, include=FALSE}
+pca_model <-
+  processed_data |>
+  select_if(!str_detect(colnames(processed_data), "_trans$")) |>
+  colnames() |>
+  lapply(binarize_cat_var, processed_data) |>
+  reduce(cbind) |>
+  prcomp()
+```
+
+```{r figure-6, echo=FALSE, fig.height=7, fig.width=5}
+ggarrange(
+  ggarrange(
+    NULL
+    , data.frame(
+        pc = colnames(pca_model$rotation)
+        , pve = pca_model$sdev^2 / sum(pca_model$sdev^2)
+      ) |>
+      mutate_at("pc", \(x) factor(x, unique(x))) |>
+      ggplot(aes(pc, pve)) +
+      geom_vline(xintercept = seq(14) + 0.5, color = "grey") +
+      geom_col() +
+      theme(
+        panel.grid = element_blank()
+        , axis.title.x = element_blank()
+        , axis.ticks.x = element_blank()
+        , axis.text.x = element_blank()
+      )
+    , NULL
+    , nrow = 1, ncol = 3
+    , widths = c(3.25, 16.5, 0.25)
+  )
+  , as.data.frame(pca_model$rotation) |>
+    rownames_to_column(var = "variable") |>
+    gather(pc, weight, -variable) |>
+    mutate_at("pc", \(x) factor(x, unique(x))) |>
+    ggplot(aes(pc, variable, fill = weight)) +
+    geom_tile(color = "white") +
+    coord_equal() +
+    scale_fill_gradient2(
+      low = "blue", mid = "black", high = "red", midpoint = 0
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+      , legend.position = "bottom"
+    )
+  , nrow = 2, ncol = 1
+  , heights = c(2, 5)
+)
+```
+
+```{r Fit k-mean model using PC1 and PC2, include=FALSE}
+set.seed(seed)
+kmean_model <-
+  processed_data |>
+  select(age) |>
+  kmeans(2, algorithm = "Hartigan-Wong")
+```
+
+```{r Combine data and the results of CM-PCA-kmean, include=FALSE}
+data_cm_pc_kmean <-
+  processed_data |>
+  rownames_to_column(var = "id") |>
+  left_join(rownames_to_column(best_model_cm, var = "id"), by = join_by(id)) |>
+  left_join(
+    rownames_to_column(as.data.frame(pca_model$x), var = "id")
+    , by = join_by(id)
+  ) |>
+  left_join(
+    data.frame(cluster = factor(kmean_model$cluster)) |>
+      rownames_to_column(var = "id")
+    , by = join_by(id)
+  )
+```
+
+```{r figure-7, echo=FALSE, fig.height=3.5, fig.width=7}
+mutate(data_cm_pc_kmean, cm = "All") |>
+  rbind(data_cm_pc_kmean) |>
+  mutate_at("cm", \(x) factor(x, unique(x))) |>
+  ggplot(aes(age, fill = cluster)) +
+  geom_density() +
+  geom_vline(xintercept = 53.5, lty = 2) +
+  facet_grid(cm ~ ., scales = "free_y") +
+  scale_x_continuous(
+    breaks = sort(c(seq(40, 65, 5), 53.5))
+    , labels = sort(c(seq(40, 65, 5), 53.5))
+  ) +
+  theme(panel.grid.minor.x = element_blank())
+```
+
+```{r Randomly select examples from cluster-CM combinations, include=FALSE}
+comb_cluster_cm <-
+  expand.grid(
+    cluster = levels(data_cm_pc_kmean$cluster)
+    , cm = levels(data_cm_pc_kmean$cm)
+    , stringsAsFactors = FALSE
+  ) |>
+  mutate(id = as.character(NA))
+
+for(i in seq(nrow(comb_cluster_cm))){
+  set.seed(seed)
+  comb_cluster_cm$id[i] <-
+    data_cm_pc_kmean |>
+    filter(cluster == comb_cluster_cm$cluster[i]) |>
+    filter(cm == comb_cluster_cm$cm[i]) |>
+    pull(id) |>
+    sample(1)
+}
+
+rm(i)
+```
+
+```{r Plot SHAP waterfall for all the examples, include=FALSE}
+shap_waterfall_selected_id <-
+  comb_cluster_cm$id |>
+  `names<-`(comb_cluster_cm$id) |>
+  lapply(
+    shap_waterfall_plot
+    , shap_feature_values[[best_model]] |>
+      left_join(select(data_cm_pc_kmean, id, cluster, cm), by = join_by(id)) |>
+      mutate(
+        cluster =
+          ifelse(cluster == 1, "<= 53 years old", ">53 years old") |>
+          factor(c("<= 53 years old", ">53 years old"))
+      ) |>
+      left_join(
+        processed_data |>
+          select_at(
+            predictors[
+              !sapply(select_at(processed_data, predictors), is.numeric)
+            ]
+          ) |>
+          as.list() |>
+          `names<-`(
+            predictors[
+              !sapply(select_at(processed_data, predictors), is.numeric)
+            ]
+          ) |>
+          lapply(levels) |>
+          imap(~ data.frame(variable = .y, category = .x)) |>
+          reduce(rbind) |>
+          separate(category, c("level", "category"), sep = " - ") |>
+          mutate(level = as.numeric(level==2)) |>
+          rename(feature = variable, feature_value = level)
+        , by = join_by(feature, feature_value)
+      ) |>
+      mutate(
+        category =
+          ifelse(
+            feature == "dm_treatment" & category == "oha_ins"
+            , "o+i", category
+          )
+      ) |>
+      mutate(
+        feature =
+          ifelse(
+            is.na(category)
+            , paste0(feature," (=", feature_value, ")")
+            , paste0(feature," (=", category, ")")
+          )
+      )
+    , threshold = th[[best_model]]
+    , exp_prob =
+        shap_feature_values[[best_model]] |>
+        select(id, prob = pred) |>
+        unique() |>
+        pull(prob) |>
+        mean()
+    , exp_obs=
+        shap_feature_values[[best_model]] |>
+        mutate(obs = as.numeric(obs == levels(obs)[2])) |>
+        select(seq, obs) |>
+        unique() |>
+        pull(obs) |>
+        mean()
+  )
+```
+
+```{r figure-8, fig.height=4.5, fig.width=10}
+ggarrange(
+  arrange_waterfall_plot(
+    "TP", shap_waterfall_selected_id, comb_cluster_cm, top = TRUE
+  )
+  , arrange_waterfall_plot("FP", shap_waterfall_selected_id, comb_cluster_cm)
+  , arrange_waterfall_plot("TN", shap_waterfall_selected_id, comb_cluster_cm)
+  , arrange_waterfall_plot(
+      "FN", shap_waterfall_selected_id, comb_cluster_cm, bottom = TRUE
+    )
+  , nrow = 4, ncol = 1, heights = c(1.25, 1, 1, 1.25)
+)
+```
+
+# Model deployment
+
+```{r Determine data for model deployment, include=FALSE}
+depmod_data <-
+  expand.grid(
+    hba1c = seq(min(predmod_data$hba1c), max(predmod_data$hba1c), 0.1)
+    , comorbidity = unique(predmod_data$comorbidity)
+    , dm_treatment = unique(predmod_data$dm_treatment)
+  ) |>
+  mutate(
+    id = str_pad(seq(n()), 3, "left", 0)
+    , outcome = as.integer(NA)
+  ) |>
+  select_at(colnames(predmod_data))
+```
+
+```{r Write data for model deployment, eval=FALSE, include=FALSE}
+depmod_data |>
+  write_csv("inst/extdata/depmod_data.csv")
+```
+
+```{r Obtain the best model probability, include=FALSE}
+best_model_prob <-
+  obtain_obs_pred("depmod_data", "inst/extdata/", "inst/extdata/best_model")
+```
+
+```{r Obtain pre-computed SHAPs of the best model, include=FALSE}
+best_model_shap_values <-
+  paste0("inst/extdata/best_model/shap_values.csv") |>
+  read_csv(show_col_types = FALSE)
+```
+
+```{r Combine SHAP with features of the best model, include=FALSE}
+best_model_shap_feature_values <-
+  best_model_shap_values |>
+  mutate(seq = seq(n())) |>
+  gather(feature, shap_value, -seq) |>
+  left_join(
+    depmod_data |>
+      select(-id, -outcome) |>
+      mutate(seq = seq(n())) |>
+      gather(feature, feature_value, -seq)
+    , by = join_by(seq, feature)
+  ) |>
+  left_join(
+    best_model_prob |>
+      mutate(seq = seq(n()))
+    ,by = join_by(seq)
+  ) |>
+  mutate(obs = factor(as.integer(pred >= th[[best_model]])))
+```
+
+```{r Deployment data with scenario, include=FALSE}
+depmod_data_scenario <-
+  depmod_data |>
+  filter(hba1c %in% c(6.0, 8.0)) |>
+  mutate(
+    cluster = ifelse(hba1c >= 6.5, 2, 1)
+    , cm =
+      case_when(
+        comorbidity == 0 & dm_treatment == 0 ~ "OHA"
+        , comorbidity == 0 & dm_treatment == 1 ~ "OHA+Insulin"
+        , comorbidity == 1 & dm_treatment == 0 ~ "OHA with\ncomorbidity"
+        , comorbidity == 1 & dm_treatment == 1 ~ "OHA+Insulin\nwith comorbidity"
+      )
+  )
+```
+
+```{r Create scenario, include=FALSE}
+comb_scenario <-
+  depmod_data_scenario |>
+  filter(
+    (cluster == 1 & cm == "OHA")
+    | (cluster == 1 & cm == "OHA+Insulin")
+    | (cluster == 1 & cm == "OHA with\ncomorbidity")
+    | (cluster == 1 & cm == "OHA+Insulin\nwith comorbidity")
+    | (cluster == 2 & cm == "OHA")
+    | (cluster == 2 & cm == "OHA+Insulin")
+    | (cluster == 2 & cm == "OHA with\ncomorbidity")
+    | (cluster == 2 & cm == "OHA+Insulin\nwith comorbidity")
+  )
+```
+
+```{r Plot SHAP waterfall for all the scenario, include=FALSE}
+shap_waterfall_selected_scenario <-
+  comb_scenario$id |>
+  `names<-`(comb_scenario$id) |>
+  lapply(
+    shap_waterfall_plot
+    , best_model_shap_feature_values |>
+      left_join(
+        select(depmod_data_scenario, id, cluster, cm), by = join_by(id)
+      ) |>
+      mutate(
+        cluster =
+          ifelse(cluster == 1, "HbA1c < 6.5", "HbA1c 6.5+") |>
+          factor(c("HbA1c < 6.5", "HbA1c 6.5+"))
+      ) |>
+      left_join(
+        processed_data |>
+          select_at(
+            predictors[
+              !sapply(select_at(processed_data, predictors), is.numeric)
+            ]
+          ) |>
+          as.list() |>
+          `names<-`(
+            predictors[
+              !sapply(select_at(processed_data, predictors), is.numeric)
+            ]
+          ) |>
+          lapply(levels) |>
+          imap(~ data.frame(variable = .y, category = .x)) |>
+          reduce(rbind) |>
+          separate(category, c("level", "category"), sep = " - ") |>
+          mutate(level = as.numeric(level==2)) |>
+          rename(feature = variable, feature_value = level)
+        , by = join_by(feature, feature_value)
+      ) |>
+      mutate(
+        category =
+          ifelse(
+            feature == "dm_treatment" & category == "oha_ins"
+            , "o+i", category
+          )
+      ) |>
+      mutate(
+        feature =
+          ifelse(
+            is.na(category)
+            , paste0(feature," (=", feature_value, ")")
+            , paste0(feature," (=", category, ")")
+          )
+      )
+    , threshold = th[[best_model]]
+    , exp_prob =
+        shap_feature_values[[best_model]] |>
+        select(id, prob = pred) |>
+        unique() |>
+        pull(prob) |>
+        mean()
+    , exp_obs=
+        shap_feature_values[[best_model]] |>
+        mutate(obs = as.numeric(obs == levels(obs)[2])) |>
+        select(seq, obs) |>
+        unique() |>
+        pull(obs) |>
+        mean()
+  )
+```
+
+```{r figure-9, fig.height=4.75, fig.width=10}
+ggarrange(
+  arrange_waterfall_plot(
+    "OHA"
+    , shap_waterfall_selected_scenario, comb_scenario, top = TRUE
+  )
+  , arrange_waterfall_plot(
+      "OHA+Insulin"
+      , shap_waterfall_selected_scenario, comb_scenario
+    )
+  , arrange_waterfall_plot(
+      "OHA with\ncomorbidity"
+      , shap_waterfall_selected_scenario, comb_scenario
+    )
+  , arrange_waterfall_plot(
+      "OHA+Insulin\nwith comorbidity"
+      , shap_waterfall_selected_scenario, comb_scenario, bottom = TRUE
+    )
+  , nrow = 4, ncol = 1, heights = c(1.25, 1, 1, 1.5)
+)
+```
 
 
 
