@@ -5,7 +5,7 @@ arrange_calib_plot <- function(calibration_obj, threshold = 0.5){
       term = ifelse(term == "rmse", "Brier score", str_to_sentence(term))
     ) |>
     mutate(lb = estimate - ci, , ub = estimate + ci) |>
-    mutate_at(c("estimate", "lb", "ub"), format, digits = 3) |>
+    mutate_at(c("estimate", "lb", "ub"), format, digits = 1) |>
     unite(ci, lb, ub, sep = ", ") |>
     mutate_at("ci", \(x) paste0("(", x, ")")) |>
     unite(summary, term, estimate, ci, sep = " ") |>
