@@ -2163,69 +2163,84 @@ for(i in seq(nrow(comb_cluster_cm))){
 rm(i)
 ```
 
+```{r Format the waterfall data, include=FALSE}
+waterfall_formatted_data <-
+  shap_feature_values[[best_model]] |>
+  left_join(
+    processed_data |>
+      select_at(
+        predictors[
+          !sapply(select_at(processed_data, predictors), is.numeric)
+        ]
+      ) |>
+      as.list() |>
+      `names<-`(
+        predictors[
+          !sapply(select_at(processed_data, predictors), is.numeric)
+        ]
+      ) |>
+      lapply(levels) |>
+      imap(~ data.frame(variable = .y, category = .x)) |>
+      reduce(rbind) |>
+      separate(category, c("level", "category"), sep = " - ") |>
+      mutate(level = as.numeric(level==2)) |>
+      rename(feature = variable, feature_value = level)
+    , by = join_by(feature, feature_value)
+  ) |>
+  mutate(
+    category =
+      ifelse(
+        feature == "dm_treatment" & category == "oha_ins"
+        , "o+i", category
+      )
+  ) |>
+  mutate(
+    feature =
+      ifelse(
+        is.na(category)
+        , paste0(feature," (=", feature_value, ")")
+        , paste0(feature," (=", category, ")")
+      )
+  )
+```
+
+```{r Compute average predicted outcome probability of dev data, include=FALSE}
+exp_prob =
+  shap_feature_values[[best_model]] |>
+  select(id, prob = pred) |>
+  unique() |>
+  pull(prob) |>
+  mean()
+```
+
+```{r Compute average true outcome probability of dev data, include=FALSE}
+exp_obs =
+  shap_feature_values[[best_model]] |>
+  mutate(obs = as.numeric(obs == levels(obs)[2])) |>
+  select(seq, obs) |>
+  unique() |>
+  pull(obs) |>
+  mean()
+```
+
 ```{r Plot SHAP waterfall for all the examples, include=FALSE}
 shap_waterfall_selected_id <-
   comb_cluster_cm$id |>
   `names<-`(comb_cluster_cm$id) |>
   lapply(
     shap_waterfall_plot
-    , shap_feature_values[[best_model]] |>
-      left_join(select(data_cm_pc_kmean, id, cluster, cm), by = join_by(id)) |>
-      mutate(
-        cluster =
-          ifelse(cluster == 1, "<= 53 years old", ">53 years old") |>
-          factor(c("<= 53 years old", ">53 years old"))
-      ) |>
-      left_join(
-        processed_data |>
-          select_at(
-            predictors[
-              !sapply(select_at(processed_data, predictors), is.numeric)
-            ]
-          ) |>
-          as.list() |>
-          `names<-`(
-            predictors[
-              !sapply(select_at(processed_data, predictors), is.numeric)
-            ]
-          ) |>
-          lapply(levels) |>
-          imap(~ data.frame(variable = .y, category = .x)) |>
-          reduce(rbind) |>
-          separate(category, c("level", "category"), sep = " - ") |>
-          mutate(level = as.numeric(level==2)) |>
-          rename(feature = variable, feature_value = level)
-        , by = join_by(feature, feature_value)
-      ) |>
-      mutate(
-        category =
-          ifelse(
-            feature == "dm_treatment" & category == "oha_ins"
-            , "o+i", category
-          )
-      ) |>
-      mutate(
-        feature =
-          ifelse(
-            is.na(category)
-            , paste0(feature," (=", feature_value, ")")
-            , paste0(feature," (=", category, ")")
-          )
-      )
+    , waterfall_formatted_data |>
+        left_join(
+          select(data_cm_pc_kmean, id, cluster, cm), by = join_by(id)
+        ) |>
+        mutate(
+          cluster =
+            ifelse(cluster == 1, "<= 53 years old", ">53 years old") |>
+            factor(c("<= 53 years old", ">53 years old"))
+        )
     , threshold = th[[best_model]]
-    , exp_prob =
-        shap_feature_values[[best_model]] |>
-        select(id, prob = pred) |>
-        unique() |>
-        pull(prob) |>
-        mean()
-    , exp_obs=
-        shap_feature_values[[best_model]] |>
-        mutate(obs = as.numeric(obs == levels(obs)[2])) |>
-        select(seq, obs) |>
-        unique() |>
-        pull(obs) |>
-        mean()
+    , exp_prob = exp_prob
+    , exp_obs = exp_obs
   )
 ```
 
@@ -2326,13 +2341,54 @@ comb_scenario <-
   )
 ```
 
+```{r Format the deployment data, include=FALSE}
+dep_formatted_data =
+  best_model_shap_feature_values |>
+  left_join(
+    processed_data |>
+      select_at(
+        predictors[
+          !sapply(select_at(processed_data, predictors), is.numeric)
+        ]
+      ) |>
+      as.list() |>
+      `names<-`(
+        predictors[
+          !sapply(select_at(processed_data, predictors), is.numeric)
+        ]
+      ) |>
+      lapply(levels) |>
+      imap(~ data.frame(variable = .y, category = .x)) |>
+      reduce(rbind) |>
+      separate(category, c("level", "category"), sep = " - ") |>
+      mutate(level = as.numeric(level==2)) |>
+      rename(feature = variable, feature_value = level)
+    , by = join_by(feature, feature_value)
+  ) |>
+  mutate(
+    category =
+      ifelse(
+        feature == "dm_treatment" & category == "oha_ins"
+        , "o+i", category
+      )
+  ) |>
+  mutate(
+    feature =
+      ifelse(
+        is.na(category)
+        , paste0(feature," (=", feature_value, ")")
+        , paste0(feature," (=", category, ")")
+      )
+  )
+```
+
 ```{r Plot SHAP waterfall for all the scenario, include=FALSE}
 shap_waterfall_selected_scenario <-
   comb_scenario$id |>
   `names<-`(comb_scenario$id) |>
   lapply(
     shap_waterfall_plot
-    , best_model_shap_feature_values |>
+    , dep_formatted_data |>
       left_join(
         select(depmod_data_scenario, id, cluster, cm), by = join_by(id)
       ) |>
@@ -2340,57 +2396,10 @@ shap_waterfall_selected_scenario <-
         cluster =
           ifelse(cluster == 1, "HbA1c < 6.5", "HbA1c 6.5+") |>
           factor(c("HbA1c < 6.5", "HbA1c 6.5+"))
-      ) |>
-      left_join(
-        processed_data |>
-          select_at(
-            predictors[
-              !sapply(select_at(processed_data, predictors), is.numeric)
-            ]
-          ) |>
-          as.list() |>
-          `names<-`(
-            predictors[
-              !sapply(select_at(processed_data, predictors), is.numeric)
-            ]
-          ) |>
-          lapply(levels) |>
-          imap(~ data.frame(variable = .y, category = .x)) |>
-          reduce(rbind) |>
-          separate(category, c("level", "category"), sep = " - ") |>
-          mutate(level = as.numeric(level==2)) |>
-          rename(feature = variable, feature_value = level)
-        , by = join_by(feature, feature_value)
-      ) |>
-      mutate(
-        category =
-          ifelse(
-            feature == "dm_treatment" & category == "oha_ins"
-            , "o+i", category
-          )
-      ) |>
-      mutate(
-        feature =
-          ifelse(
-            is.na(category)
-            , paste0(feature," (=", feature_value, ")")
-            , paste0(feature," (=", category, ")")
-          )
       )
     , threshold = th[[best_model]]
-    , exp_prob =
-        shap_feature_values[[best_model]] |>
-        select(id, prob = pred) |>
-        unique() |>
-        pull(prob) |>
-        mean()
-    , exp_obs=
-        shap_feature_values[[best_model]] |>
-        mutate(obs = as.numeric(obs == levels(obs)[2])) |>
-        select(seq, obs) |>
-        unique() |>
-        pull(obs) |>
-        mean()
+    , exp_prob = exp_prob
+    , exp_obs = exp_obs
   )
 ```
 
@@ -2415,6 +2424,154 @@ ggarrange(
   , nrow = 4, ncol = 1, heights = c(1.25, 1, 1, 1.5)
 )
 ```
+
+```{r Combine dataframe for creating nomogram, include=FALSE}
+nomogram_data <-
+  depmod_data |>
+  mutate(
+    cm =
+      case_when(
+        comorbidity == 0 & dm_treatment == 0 ~ "OHA"
+        , comorbidity == 0 & dm_treatment == 1 ~ "OHA+Insulin"
+        , comorbidity == 1 & dm_treatment == 0 ~ "OHA with\ncomorbidity"
+        , comorbidity == 1 & dm_treatment == 1 ~ "OHA+Insulin\nwith comorbidity"
+      ) |>
+      factor(
+        c("OHA"
+          , "OHA+Insulin"
+          , "OHA with\ncomorbidity"
+          , "OHA+Insulin\nwith comorbidity"
+          
+        )
+      )
+  ) |>
+  left_join(best_model_prob, by = join_by(id)) |>
+  select(id, cm, hba1c_value = hba1c, prob = pred) |>
+  cbind(best_model_shap_values) |>
+  gather(metric, value, -id, -cm, -hba1c_value) |>
+  mutate(type = ifelse(metric == "prob", "prob", "shap"))
+```
+
+```{r Create nomogram}
+nomogram <-
+  ggarrange(
+    ggarrange(
+      data.frame(h = 1, v = 5, l = "Comorbidity last 3 months?", b = 1) |>
+        rbind(data.frame(h = 2, v = 5+2.5, l = "No", b = 1)) |>
+        rbind(data.frame(h = 2, v = 5-2.5, l = "Yes", b = 1)) |>
+        rbind(
+          data.frame(h = 3, v = 5+2.5, l = "Insulin last 3 months?", b = 2)
+        ) |>
+        rbind(data.frame(h = 4, v = 5+2.5+1.25, l = "No", b = 2)) |>
+        rbind(data.frame(h = 4, v = 5+2.5-1.25, l = "Yes", b = 2)) |>
+        rbind(
+          data.frame(h = 3, v = 5-2.5, l = "Insulin last 3 months?", b = 2)
+        ) |>
+        rbind(data.frame(h = 4, v = 5-2.5+1.25, l = "No", b = 2)) |>
+        rbind(data.frame(h = 4, v = 5-2.5-1.25, l = "Yes", b = 2)) |>
+        rbind(
+          data.frame(h = 5, v = 5+2.5+1.25, l = "HbA1c last 3 months?", b = 3)
+        ) |>
+        rbind(
+          data.frame(h = 5, v = 5+2.5-1.25, l = "HbA1c last 3 months?", b = 3)
+        ) |>
+        rbind(
+          data.frame(h = 5, v = 5-2.5+1.25, l = "HbA1c last 3 months?", b = 3)
+        ) |>
+        rbind(
+          data.frame(h = 5, v = 5-2.5-1.25, l = "HbA1c last 3 months?", b = 3)
+        ) |>
+        mutate(b = factor(b)) |>
+        mutate(i = h + 1, j = v) |>
+        ggplot(aes(h, v)) +
+        geom_text(
+          data = data.frame(h = c(1-0.25, 5+0.25), v = c(0, 10), l = c("", ""))
+          , aes(label = l)
+        ) +
+        geom_edges(
+          aes(xend = i, yend = j)
+          , arrow = arrow(length = unit(0.15, "line"), type = "closed")
+        ) +
+        geom_edges(
+          data =
+            data.frame(h = 2, v = 5-2.5, i = 2, j = 5+2.5) |>
+            rbind(data.frame(h = 4, v = 5+2.5-1.25, i = 4, j = 5+2.5+1.25)) |>
+            rbind(data.frame(h = 4, v = 5-2.5-1.25, i = 4, j = 5-2.5+1.25))
+          , aes(xend = i, yend = j)
+        ) +
+        geom_label(
+          aes(label = l, fill = b)
+          , size = 3, angle = 90, show.legend = FALSE
+        ) +
+        theme_blank()
+      , NULL
+      , nrow = 2, ncol = 1
+      , heights = c(6.75, 0.25)
+    )
+    , nomogram_data |>
+      filter(type == "prob") |>
+      ggplot(aes(value, hba1c_value)) +
+      geom_vline(xintercept = th[[best_model]], lty = 2) +
+      geom_path() +
+      facet_grid(cm ~ .) +
+      scale_x_continuous("Fatigue ->") +
+      scale_y_continuous("HbA1c") +
+      theme(
+        , axis.title.y = element_blank()
+        , strip.text.y = element_blank()
+      )
+    , nomogram_data |>
+      filter(type == "shap") |>
+      ggplot(aes(value, hba1c_value)) +
+      geom_vline(xintercept = 0, lty = 2) +
+      geom_path(aes(color = metric), show.legend = FALSE) +
+      facet_grid(cm ~ .) +
+      scale_x_continuous("Impact on fatigue ->") +
+      scale_color_discrete("") +
+      theme(
+        axis.title.y = element_blank()
+        , axis.text.y = element_blank()
+        , strip.text.y = element_blank()
+      )
+    , nrow = 1, ncol = 3
+    , widths = c(1.5, 3, 2.5)
+  )
+```
+
+```{r figure-10, echo=FALSE, fig.height=1.75, fig.width=5.5, include=FALSE}
+predict_with_shap_waterfall(
+  comorbidity = 0 # 0 or 1
+  , hba1c = 8 # 5.9 to 10.1
+  , dm_treatment = 0 # 0 or 1
+)
+```
+
+```{r Save input for deploying models, eval=FALSE, include=FALSE}
+saveRDS(depmod_data, "data/depmod_data.rds")
+saveRDS(best_model_prob, "data/best_model_prob.rds")
+saveRDS(dep_formatted_data, "data/dep_formatted_data.rds")
+```
+
+```{r figure-10, echo=FALSE, fig.height=7, fig.width=7}
+nomogram
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
