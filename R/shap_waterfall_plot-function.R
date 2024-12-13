@@ -33,9 +33,9 @@ shap_waterfall_plot <- function(identifier, data, threshold, exp_prob, exp_obs){
         )
       , exp_prob_offset =
         ifelse(
-          exp_prob[1] <= last(shap_end)
-          , exp_prob[1] + (last(shap_end) - exp_prob[1])/2
-          , last(shap_end) + (exp_prob[1] - last(shap_end))/2
+          exp_prob <= last(shap_end)
+          , exp_prob + (last(shap_end) - exp_prob)/2
+          , last(shap_end) + (exp_prob - last(shap_end))/2
         )
       , shap_pos_v1 =
         ifelse(abs(shap_end - shap_start) > 0.1, shap_end, shap_start)
@@ -47,6 +47,10 @@ shap_waterfall_plot <- function(identifier, data, threshold, exp_prob, exp_obs){
           , ifelse(shap_start <= shap_end, shap_pos_v1, shap_pos_v2)
           , ifelse(shap_start <= shap_end, shap_pos_v2, shap_pos_v1)
         )
+    ) |>
+    mutate(
+      shap_end = ifelse(shap_end <= 0, 0, ifelse(shap_end >= 1, 1, shap_end))
+      , shap_pos = ifelse(shap_pos <= 0, 0, ifelse(shap_pos >= 1, 1, shap_pos))
     )
   
   shap_direction_color <-
