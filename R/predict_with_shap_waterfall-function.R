@@ -25,7 +25,7 @@ predict_with_shap_waterfall <- function(comorbidity, hba1c, dm_treatment){
         "SHAP value (impact on model output)"
       , cm =
         paste0(
-          "fatigue (="
+          "Fatigue (="
           , ifelse(pred_prob >= th[[best_model]], "yes", "no")
           , ")"
         )
@@ -38,6 +38,12 @@ predict_with_shap_waterfall <- function(comorbidity, hba1c, dm_treatment){
         left_join(
           select(mod_input, id, cluster, cm), by = join_by(id)
         )
-      , th[[best_model]], exp_prob, exp_obs
+      , th[[best_model]], exp_prob, exp_obs, shap_text_size = 2.5
+    ) +
+    theme(
+      axis.title.x = element_text(size = 8)
+      , axis.text.x = element_text(size = 7)
+      , axis.text.y = element_text(size = 7)
+      , strip.text = element_text(size = 7)
     )
 }
