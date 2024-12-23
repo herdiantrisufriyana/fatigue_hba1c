@@ -1,4 +1,4 @@
-# Identifying fatigue-related poor glycemic outcomes in type 2 diabetes using causal machine learning
+# Large language model-assisted causal machine learning for identifying fatigue-related poor HbA1c in type 2 diabetes
 
 Herdiantri Sufriyana, Emily Chia-Yu Su, Rudy Kurniawan, Hsiao-Yean Chiu, Safiruddin Al-Baqi, Debby Syahru Romadlon
 
