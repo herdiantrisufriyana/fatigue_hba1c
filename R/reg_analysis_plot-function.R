@@ -9,7 +9,7 @@ reg_analysis_plot <- function(data, strata = NULL){
   if(is.null(strata)){
     p <-
       data |>
-      ggplot(aes(variable_num, log(OR)))
+      ggplot(aes(variable_num, log2(OR)))
   }else{
     variable_label <-
       data.frame(
@@ -32,14 +32,14 @@ reg_analysis_plot <- function(data, strata = NULL){
     
     p <-
       data |>
-      ggplot(aes(as.numeric(strata), log(OR), color = strata))
+      ggplot(aes(as.numeric(strata), log2(OR), color = strata))
   }
   
   p <-
     p +
-    geom_errorbar(aes(ymin = log(LB), ymax = log(UB)), width = 0.25) +
+    geom_errorbar(aes(ymin = log2(LB), ymax = log2(UB)), width = 0.25) +
     geom_point() +
-    geom_hline(yintercept = log(1), color = "grey", linewidth = 1)
+    geom_hline(yintercept = log2(1), color = "grey", linewidth = 1)
   
   if(!is.null(strata)){
     p <-
@@ -74,7 +74,11 @@ reg_analysis_plot <- function(data, strata = NULL){
     p +
     theme_minimal() +
     xlab("") +
-    scale_y_continuous(limits = c(log(1/60), log(60))) +
+    scale_y_continuous(
+      "log2(OR) (95% CI)"
+      , limits = c(log2(1/2^6), log2(2^6))
+      , breaks = log2(c(rev(1/2^seq(6)), 1, 2^seq(6)))
+    ) +
     theme(
       panel.grid.major = element_blank()
       , panel.grid.minor = element_blank()
