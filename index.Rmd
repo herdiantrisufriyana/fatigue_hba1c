@@ -901,6 +901,89 @@ correlation_matrix <-
   arrange(V1, V2)
 ```
 
+```{r Obtain correlation test names for each pair with PS, include=FALSE}
+correlation_test_names_ps <-
+  ms_added_data |>
+  colnames() |>
+  setdiff(var_cat_val1) |>
+  combn(2) |>
+  as.data.frame() |>
+  t() |>
+  as.data.frame() |>
+  `rownames<-`(NULL) |>
+  filter(
+    paste0(V1, V2)
+    %in% c(
+      pairwise_cat_sum_ps |>
+        filter(ps) |>
+        unite(V1V2, V1, V2, sep = "") |>
+        pull(V1V2)
+    )
+  ) |>
+  filter(str_remove_all(V1, "^ms_") != str_remove_all(V2, "^ms_")) |>
+  pmap(\(V1, V2) list(V1 = V1, V2 = V2)) |>
+  lapply(
+    \(x)
+    suppressWarnings(auto_stat_test_names(
+        ms_added_data[[x$V1]]
+        ,ms_added_data[[x$V2]]
+        ,perfect_separation = TRUE
+      )) |>
+      list() |>
+      `names<-`("test") |>
+      c(list(V1 = x$V1, V2 = x$V2))
+  ) |>
+  lapply(as.data.frame) |>
+  reduce(rbind)
+```
+
+```{r Obtain correlation test names for each pair without PS, include=FALSE}
+correlation_test_names_non_ps <-
+  ms_added_data |>
+  colnames() |>
+  setdiff(var_cat_val1) |>
+  combn(2) |>
+  as.data.frame() |>
+  t() |>
+  as.data.frame() |>
+  `rownames<-`(NULL) |>
+  filter(
+    !paste0(V1, V2)
+    %in% c(
+      pairwise_cat_sum_ps |>
+        filter(ps) |>
+        unite(V1V2, V1, V2, sep = "") |>
+        pull(V1V2)
+    )
+  ) |>
+  filter(str_remove_all(V1, "^ms_") != str_remove_all(V2, "^ms_")) |>
+  pmap(
+    \(V1, V2)
+    suppressWarnings(auto_stat_test_names(
+        ms_added_data[[V1]]
+        ,ms_added_data[[V2]]
+        ,normal_V1 = !V1 %in% var_num_non_normal_after_trans
+        ,normal_V2 = !V2 %in% var_num_non_normal_after_trans
+      )) |>
+      list() |>
+      `names<-`("test") |>
+      c(list(V1 = V1, V2 = V2))
+  ) |>
+  lapply(as.data.frame) |>
+  reduce(rbind)
+```
+
+```{r Obtain correlation test names for each pair, include=FALSE}
+correlation_test_names <-
+  correlation_test_names_ps |>
+  rbind(correlation_test_names_non_ps) |>
+  mutate(
+    V1 = factor(V1, colnames(ms_added_data))
+    ,V2 = factor(V2, levels(V1))
+  ) |>
+  arrange(V1, V2)
+```
+
 ```{r figure-2, echo=FALSE, fig.height=5, fig.width=7}
 same_v_corr_df =
   data.frame(
@@ -933,9 +1016,24 @@ correlation_matrix |>
     ,cor.p.value = ifelse(cor.p.value<0.001, "<0.001", round(cor.p.value,3))
   ) |>
   rbind(same_v_corr_df) |>
+  left_join(
+    correlation_test_names |>
+      left_join(
+        select(correlation_test_names, test) |>
+          unique() |>
+          mutate(test_n = seq(n()))
+        # |>
+        #   unite(test, test_n, test, sep = ") ") |>
+        #   pull(test) |>
+        #   paste0(collapse = "; (") |>
+        #   cat()
+        , by = join_by(test)
+      )
+    , by = join_by(V1, V2)
+  ) |>
   ggplot(aes(V1, V2, fill = sig)) +
   geom_tile(color = "white", na.rm = TRUE) +
-  # geom_text(aes(label = cor.p.value), size = 2.5, na.rm = TRUE) +
+  geom_text(aes(label = test_n), size = 2.5, na.rm = TRUE) +
   geom_tile(data = same_v_corr_df, fill = "white") +
   geom_text(
     data =
@@ -959,6 +1057,9 @@ correlation_matrix |>
     ,axis.text = element_blank()
   )
 ```
+
+Figure 2. Correlation matrix. The numbers indicate the statistical tests: (1) Bayesian binomial logistic regression analysis; (2) Fisher's exact test; (3) Welch's t-test; (4) Mann-Whitney U Test (Wilcoxon Rank-Sum Test); (5) Analysis of variance (ANOVA); (6) Pearson's correlation test; (7) Spearman's correlation test; (8) Bayesian multinomial logistic regression analysis; and (9) Kruskal-Wallis test. *, based on p-value (frequentist) or 95% CI (Bayesian); †, pair of variable and its missingness; ‡, at least 1 variable was a categorical variable with a category of 1 value.
+
 
 ```{r Write pairs with significant correlations, eval=FALSE, include=FALSE}
 correlation_matrix |>
@@ -1084,11 +1185,20 @@ correlation_direction_response <-
 
 ```{r table-8, echo=FALSE}
 correlation_direction_response |>
+  left_join(rename(colname_label, V1 = colname), by = join_by(V1)) |>
+  mutate(V1 = label) |>
+  select(-label) |>
+  left_join(rename(colname_label, V2 = colname), by = join_by(V2)) |>
+  mutate(V2 = label) |>
+  select(-label) |>
+  rename(variable_1 = V1, variable_2 = V2) |>
+  rename_all(str_replace_all, "_", " ") |>
+  rename_all(str_to_sentence) |>
   kable(
     format = kable_format
     ,caption =
       paste0(
-        "Table 8. ChatGPT-4 response to identify "
+        "Table 8. ChatGPT response using GPT-4 backend to identify "
         ,"hypothetical directions of the correlations."
       )
   ) |>
@@ -1143,7 +1253,10 @@ correlation_graph_plot <-
         ,circular = TRUE
       )
     ,arrow.gap = 0.075
-  )
+  ) |>
+  left_join(rename(colname_label, name = colname), by = join_by(name)) |>
+  mutate(name = label) |>
+  select(-label)
 
 correlation_graph_plot <-
   correlation_graph_plot |>
@@ -1175,8 +1288,13 @@ correlation_graph_plot <-
   theme_void()
 ```
 
-```{r figure-3, echo=FALSE, fig.height=3.5, fig.width=3.5}
+```{r figure-3, echo=FALSE, fig.height=3.54331, fig.width=3.54331}
 correlation_graph_plot
+```
+
+```{r Fig. 1, eval=FALSE, fig.height=3.54331, fig.width=3.54331, include=FALSE}
+correlation_graph_plot
+ggsave("doc/figure1.eps", height = 3.54331, width = 3.54331, units = "in")
 ```
 
 # Missing value imputation
@@ -1328,9 +1446,26 @@ desc_stats <-
   mutate_at("value", as.character) |>
   mutate_at(
     "value"
-    ,\(x) ifelse(is.na(x), "average (SD)", paste0(x," % (n)"))
+    ,\(x)
+    ifelse(
+      is.na(x)
+      , "average (SD)"
+      , paste0(str_remove_all(x, "^[:digit:]+ - ")," % (n)")
+    )
+  ) |>
+  mutate_at(
+    "value"
+    , \(x)
+    str_replace_all(x, "oha", "OHA") |>
+      str_replace_all("OHA_ins", "OHA + insulin")
   ) |>
   arrange(factor(variable, reduce(var[!names(var) %in% "dependent"], c))) |>
+  left_join(
+    rename(colname_label, variable = colname)
+    , by = join_by(variable)
+  ) |>
+  mutate(variable = label) |>
+  select(-label) |>
   mutate(variable = ifelse(duplicated(variable), "", variable))
 
 desc_stats <-
@@ -1350,6 +1485,14 @@ desc_stats <-
   )
 
 desc_stats |>
+  rename_at(
+    3:4
+    , str_replace_all
+    , "^[:digit:]+"
+    , colname_label$label[colname_label$colname == var$dependent]
+  ) |>
+  rename_all(str_to_sentence) |>
+  rename_at("Value", \(x) " ") |>
   kable(
     format = kable_format
     ,caption = "Table 9. Sample characteristics."
@@ -1390,14 +1533,62 @@ univar_reg <-
 univar_reg  |>
   filter(term != "(Intercept)") |>
   select_at(c("variable", "term", "OR", "LB", "UB", "p.value")) |>
-  mutate_at(3:6, round, 3) |>
+  mutate_at(3:6, round, 1) |>
+  filter(variable != "hba1c") |>
+  filter(
+    str_detect(
+      variable
+      , paste0(
+          filter(correlation_graph_df, to == "fatigue")$from, collapse = "|"
+        )
+    )
+  ) |>
+  left_join(
+    processed_data |>
+      lapply(levels) |>
+      imap(
+        ~ data.frame(variable = .y, reference = ifelse(is.null(.x), NA, .x))
+      ) |>
+      reduce(rbind)
+    , by = join_by(variable)
+  ) |>
+  left_join(
+    rename(colname_label, variable = colname)
+    , by = join_by(variable)
+  ) |>
+  mutate(variable = label) |>
+  select(-label) |>
+  mutate_at(
+    c("term", "reference")
+    ,\(x) str_remove_all(x, "^[:digit:]+ - ")
+  ) |>
+  mutate_at(
+    c("term", "reference")
+    , \(x)
+    str_replace_all(x, "oha", "OHA") |>
+      str_replace_all("OHA_ins", "OHA + insulin")
+  ) |>
+  unite(term_reference, term, reference, sep = " vs. ") |>
   mutate(variable = paste0(variable, ifelse(p.value <= 0.05, "*", ""))) |>
-  arrange(p.value) |>
   mutate(
     p.value =
       ifelse(p.value < 0.001, "<0.001", round(p.value, 3)) |>
       as.character()
   ) |>
+  unite(CI, LB, UB, sep = ", ") |>
+  unite(CI_p, CI, p.value, sep = "; ") |>
+  mutate(CI_p = paste0("(", CI_p, ")")) |>
+  unite(`OR (95% CI; p-value)`, OR, CI_p, sep = " ") |>
+  mutate(
+    term_reference =
+      ifelse(term_reference == "value vs. NA", "", term_reference)
+    , variable =
+      ifelse(duplicated(variable), "", variable)
+  ) |>
+  mutate(covariates = "", mediators = "") |>
+  select(variable, term_reference, covariates, mediators, everything()) |>
+  rename_at(1:4, str_to_sentence) |>
+  rename_at("Term_reference", \(x) " ") |>
   kable(
     format = kable_format
     ,caption = "Table 10. Univariate regression analysis."
@@ -1483,16 +1674,63 @@ multivar_reg  |>
   slice(1) |>
   ungroup() |>
   select_at(c("variable", "term", "OR", "LB", "UB", "p.value")) |>
-  mutate_at(3:6, round, 3) |>
+  mutate_at(3:6, round, 1) |>
   left_join(select(multivar_adjustment, -formula), by = join_by(variable)) |>
   select(variable, covariates, everything()) |>
+  arrange(factor(variable, unique(univar_reg$variable))) |>
+  filter(variable != "hba1c") |>
+  left_join(
+    processed_data |>
+      lapply(levels) |>
+      imap(
+        ~ data.frame(variable = .y, reference = ifelse(is.null(.x), NA, .x))
+      ) |>
+      reduce(rbind)
+    , by = join_by(variable)
+  ) |>
+  left_join(
+    rename(colname_label, variable = colname)
+    , by = join_by(variable)
+  ) |>
+  mutate(variable = label) |>
+  select(-label) |>
+  mutate_at(
+    c("term", "reference")
+    ,\(x) str_remove_all(x, "^[:digit:]+ - ")
+  ) |>
+  mutate_at(
+    c("term", "reference")
+    , \(x)
+    str_replace_all(x, "oha", "OHA") |>
+      str_replace_all("OHA_ins", "OHA + insulin")
+  ) |>
+  unite(term_reference, term, reference, sep = " vs. ") |>
   mutate(variable = paste0(variable, ifelse(p.value <= 0.05, "*", ""))) |>
-  arrange(p.value) |>
   mutate(
     p.value =
       ifelse(p.value<0.001, "<0.001", round(p.value,3)) |>
       as.character()
   ) |>
+  unite(CI, LB, UB, sep = ", ") |>
+  unite(CI_p, CI, p.value, sep = "; ") |>
+  mutate(CI_p = paste0("(", CI_p, ")")) |>
+  unite(`OR (95% CI; p-value)`, OR, CI_p, sep = " ") |>
+  mutate(
+    term_reference =
+      ifelse(term_reference == "value vs. NA", "", term_reference)
+    , variable =
+      ifelse(duplicated(variable), "", variable)
+  ) |>
+  left_join(
+    rename(colname_label, covariates = colname)
+    , by = join_by(covariates)
+  ) |>
+  mutate(covariates = ifelse(is.na(label), "", label)) |>
+  select(-label) |>
+  mutate(mediators = "") |>
+  select(variable, term_reference, covariates, mediators, everything()) |>
+  rename_at(1:4, str_to_sentence) |>
+  rename_at("Term_reference", \(x) " ") |>
   kable(
     format = kable_format
     ,caption = "Table 2. Multivariate regression analysis."
@@ -1619,9 +1857,35 @@ mediation  |>
   slice(1) |>
   ungroup() |>
   select_at(c("variable", "mediators", "term", "OR", "LB", "UB", "p.value")) |>
-  mutate_at(4:7, round, 3) |>
+  mutate_at(4:7, round, 1) |>
   left_join(select(multivar_adjustment, -formula), by=join_by(variable)) |>
   select(variable, covariates, everything()) |>
+  left_join(
+    processed_data |>
+      lapply(levels) |>
+      imap(
+        ~ data.frame(variable = .y, reference = ifelse(is.null(.x), NA, .x))
+      ) |>
+      reduce(rbind)
+    , by = join_by(variable)
+  ) |>
+  left_join(
+    rename(colname_label, variable = colname)
+    , by = join_by(variable)
+  ) |>
+  mutate(variable = label) |>
+  select(-label) |>
+  mutate_at(
+    c("term", "reference")
+    ,\(x) str_remove_all(x, "^[:digit:]+ - ")
+  ) |>
+  mutate_at(
+    c("term", "reference")
+    , \(x)
+    str_replace_all(x, "oha", "OHA") |>
+      str_replace_all("OHA_ins", "OHA + insulin")
+  ) |>
+  unite(term_reference, term, reference, sep = " vs. ") |>
   mutate(variable = paste0(variable, ifelse(p.value<=0.05,"*",""))) |>
   arrange(p.value) |>
   mutate(
@@ -1629,6 +1893,31 @@ mediation  |>
       ifelse(p.value<0.001, "<0.001", round(p.value,3)) |>
       as.character()
   ) |>
+  unite(CI, LB, UB, sep = ", ") |>
+  unite(CI_p, CI, p.value, sep = "; ") |>
+  mutate(CI_p = paste0("(", CI_p, ")")) |>
+  unite(`OR (95% CI; p-value)`, OR, CI_p, sep = " ") |>
+  mutate(
+    term_reference =
+      ifelse(term_reference == "value vs. NA", "", term_reference)
+    , variable =
+      ifelse(duplicated(variable), "", variable)
+  ) |>
+  left_join(
+    rename(colname_label, covariates = colname)
+    , by = join_by(covariates)
+  ) |>
+  mutate(covariates = ifelse(is.na(label), "", label)) |>
+  select(-label) |>
+  left_join(
+    rename(colname_label, mediators = colname)
+    , by = join_by(mediators)
+  ) |>
+  mutate(mediators = ifelse(is.na(label), "", label)) |>
+  select(-label) |>
+  select(variable, term_reference, covariates, mediators, everything()) |>
+  rename_at(1:4, str_to_sentence) |>
+  rename_at("Term_reference", \(x) " ") |>
   kable(
     format = kable_format
     ,caption = "Table 3. Mediation analysis."
@@ -1744,7 +2033,7 @@ mod_exp_decay_results <-
   spread(term, p.value)
 ```
 
-```{r figure-4, echo=FALSE, fig.height=s, fig.width=7}
+```{r figure-4, echo=FALSE, fig.height=5, fig.width=7}
 sample_size_estimation |>
   left_join(
     mod_exp_decay[sapply(mod_exp_decay, \(x) !is.character(x))] |>
@@ -1779,7 +2068,9 @@ sample_size_estimation |>
     , size = 3, hjust = 0, vjust = -0.1, check_overlap = TRUE
   ) +
   facet_wrap(~ name, ncol = 4, scales = "free_y") +
-  xlab("Number of samples with minority class per candidate predictor") +
+  xlab(
+    "Number of samples with minority class of outcome per candidate predictor"
+  ) +
   scale_y_continuous(
     "AUC-ROC"
     , breaks = seq(0, 1, 0.025)
@@ -1787,7 +2078,7 @@ sample_size_estimation |>
   )
 ```
 
-Figure 3. Sample size estimation. Red line indicates the modified exponential decay fitting. p(a) is the p-value of a where a is a parameter represents the factor by which the exponential term is scaled in the model and a higher value generally means a quicker initial increase. p(k) is the p-value of k where k is the rate of decay or growth in the exponential term and a positive k implies a decay (as x increases, the impact of increasing y diminishes) while a negative k suggests an erroneous model fit in this context because an increase in x should not lead to a decrease in y.
+Figure 4. Sample size estimation. Blue line indicates the LOESS. Red line indicates the modified exponential decay fitting. p(a) is the p-value of a where a is a parameter represents the factor by which the exponential term was scaled in the model and a higher value generally means a quicker initial increase. p(k) is the p-value of k where k is the rate of decay or growth in the exponential term and a positive k implies a decay (as x increases, the impact of increasing y diminishes) while a negative k suggests an erroneous model fit in this context because an increase in x should not lead to a decrease in y. AUC-ROC, the area under curve of receiver operating characteristics; LOESS, locally estimated scatterplot smoothing.
 
 ```{r Select algorithms of which the sample size is sufficient, include=FALSE}
 algo_suff_sampsize <-
@@ -1867,7 +2158,7 @@ eval_plot_df <-
   )
 ```
 
-```{r figure-4, fig.height=12, fig.width=10}
+```{r figure-5, fig.height=12, fig.width=10}
 ggarrange(
   eval_plot_df$knn |>
     arrange_eval_plot(
@@ -1926,36 +2217,183 @@ shap_feature_values <-
   )
 ```
 
-```{r figure-5, echo=FALSE, fig.height=7, fig.width=7}
-ggarrange(
+```{r Plot regression analysis of the predictors, include=FALSE}
+predmod_reg_plot <-
   multivar_reg_sig |>
-    filter(
-      !variable %in% filter(multivar_reg_mediator_sig, !is.na(OR))$variable
-    ) |>
-    rbind(select(filter(multivar_reg_mediator_sig, !is.na(OR)), -mediators)) |>
-    filter(variable %in% predictors) |>
-    mutate(type = "SCM") |>
-    rbind(
-      eval$df |>
-        imap(~ obtain_model_feature_effect_size(.x, th = th[[.y]])) |>
-        imap(~ mutate(.x, type = str_to_upper(.y))) |>
-        reduce(rbind)
-    ) |>
-    mutate_at("type", \(x) factor(x, unique(x))) |>
-    reg_analysis_plot(strata = "type")
-  , shap_feature_values$knn |>
-    shap_beeswarm_plot(seed, transparency = 0.5)
-  , shap_feature_values$dt |>
-    shap_beeswarm_plot(seed, transparency = 0.5)
-  , shap_feature_values$rf |>
-    shap_beeswarm_plot(seed, transparency = 0.5)
+  filter(
+    !variable %in% filter(multivar_reg_mediator_sig, !is.na(OR))$variable
+  ) |>
+  rbind(select(filter(multivar_reg_mediator_sig, !is.na(OR)), -mediators)) |>
+  filter(variable != "hba1c") |>
+  mutate_at("variable", str_remove_all, "_trans") |>
+  mutate(type = "SCM") |>
+  rbind(
+    eval$df |>
+      imap(~ obtain_model_feature_effect_size(.x, th = th[[.y]])) |>
+      imap(~ mutate(.x, type = str_to_upper(.y))) |>
+      reduce(rbind)
+  ) |>
+  mutate_at("type", \(x) factor(x, unique(x))) |>
+  left_join(
+    rename(colname_label, variable = colname), by = join_by(variable)
+  ) |>
+  mutate(variable = label) |>
+  select(-label) |>
+  reg_analysis_plot(strata = "type")
+```
+
+```{r SHAP beeswarm plot of KNN, include=FALSE}
+shap_beeswarm_plots <-
+  shap_feature_values |>
+  lapply(
+    \(x)
+    x |>
+      left_join(
+        rename(colname_label, feature = colname), by = join_by(feature)
+      ) |>
+      mutate(feature = label) |>
+      shap_beeswarm_plot(seed, transparency = 1)
+  )
+```
+
+```{r figure-6, echo=FALSE, fig.height=7, fig.width=7}
+ggarrange(
+  predmod_reg_plot
+  , shap_beeswarm_plots$knn
+  , shap_beeswarm_plots$dt
+  , shap_beeswarm_plots$rf
   , nrow = 4, ncol = 1
   , heights = c(2, 2, 2, 2)
   , labels = LETTERS[1:4]
 )
 ```
 
-Figure 5. Model explainability: (A) regression analysis of the predictors; (B) SHAP beeswarm plot of KNN; (C) SHAP beeswarm plot of DT; and (D) SHAP beeswarm plot of RF. DM, diabetes mellitus; DT, decision tree; KNN, k-nearest neighbor; OR, odds ration; RF, random forest; SCM, structural causal model; SHAP, Shapley additive explanation.
+Figure 6. Model explainability: (A) regression analysis of the predictors; (B) SHAP beeswarm plot of KNN; (C) SHAP beeswarm plot of DT; and (D) SHAP beeswarm plot of RF. CI, confidence interval; DM, diabetes mellitus; DT, decision tree; KNN, k-nearest neighbor; OHA, oral hypoglycemic agent; OR, odds ration; RF, random forest; SCM, structural causal model; SHAP, Shapley additive explanation.
+
+```{r Decision curve plots, include=FALSE}
+predmod_decision_curve <-
+  data.frame(th = NA, nb = NA, type = "SCM") |>
+  rbind(mutate(eval_plot_df$knn$decision$plot$data, type = "KNN")) |>
+  rbind(mutate(eval_plot_df$dt$decision$plot$data, type = "DT")) |>
+  rbind(mutate(eval_plot_df$rf$decision$plot$data, type = "RF")) |>
+  left_join(
+    th |>
+      imap(~ data.frame(type = str_to_upper(.y), threshold = .x)) |>
+      reduce(rbind)
+    , by = join_by(type)
+  ) |>
+  mutate_at("type", \(x) factor(x, unique(x))) |>
+  ggplot(aes(th, nb, color = type)) +
+  geom_hline(yintercept = 0, lty = 2) +
+  annotate(
+    "text", 0, 0, label = "treat none"
+    , hjust = 0, vjust = -0.4, size = 3
+  ) +
+  geom_abline(
+    slope = -1, intercept = eval_plot_df$knn$decision$prevalence
+    , lty = 2
+  ) +
+  annotate(
+    "text"
+    , 0, eval_plot_df$knn$decision$prevalence
+    , angle = -75, label = "treat all"
+    , hjust = -0.4, vjust = 1.4, size = 3
+  ) +
+  geom_path(, na.rm = TRUE) +
+  geom_point(
+    aes(x = ifelse(th == threshold, th, NA)), size = 2, na.rm = TRUE
+  ) +
+  scale_x_continuous(
+    "Threshold"
+    , breaks = seq(0, 1, 0.2)
+    , limits = c(0, 1)
+  ) +
+  scale_y_continuous(
+    "Net benefit"
+    , breaks = seq(0, 1, 0.1)
+    , limits = c(0, 0.5)
+  ) +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+```{r Decision curve plots, include=FALSE}
+predmod_roc_curve <-
+  data.frame(th = NA, tpr = NA, tnr = NA, type = "SCM") |>
+  rbind(mutate(eval_plot_df$knn$discrimination$plot$data, type = "KNN")) |>
+  rbind(mutate(eval_plot_df$dt$discrimination$plot$data, type = "DT")) |>
+  rbind(mutate(eval_plot_df$rf$discrimination$plot$data, type = "RF")) |>
+  left_join(
+    th |>
+      imap(~ data.frame(type = str_to_upper(.y), threshold = .x)) |>
+      reduce(rbind)
+    , by = join_by(type)
+  ) |>
+  mutate_at("type", \(x) factor(x, unique(x))) |>
+  ggplot(aes(tnr, tpr, color = type)) +
+  geom_abline(slope = 1, intercept = 1, lty = 2) +
+  geom_path(na.rm = TRUE) +
+  geom_point(aes(x=ifelse(th == threshold, tnr, NA)), na.rm = TRUE) +
+  coord_equal() +
+  scale_x_reverse(
+    "Specificity", breaks = seq(0, 1, 0.1), limits = c(1, 0)
+  ) +
+  scale_y_continuous(
+    "Sensitivity", breaks = seq(0, 1, 0.1), limits = c(0, 1)
+  ) +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+```{r Decision curve plots, include=FALSE}
+model_evaluation_plot <-
+  ggarrange(
+    ggarrange(
+      eval_plot_df$knn$calibration |>
+        arrange_calib_plot(th$knn)
+      , eval_plot_df$dt$calibration |>
+        arrange_calib_plot(th$dt)
+      , eval_plot_df$rf$calibration |>
+        arrange_calib_plot(th$rf)
+      , nrow = 3, ncol = 1
+      , heights = c(4, 4, 4)
+      , labels = LETTERS[1:3]
+    )
+    , ggarrange(
+        ggarrange(
+          predmod_decision_curve
+          , predmod_roc_curve
+          , nrow = 1, ncol = 2
+          , widths = c(4, 6)
+          , labels = LETTERS[4:5]
+        )
+        , ggarrange(
+            predmod_reg_plot
+            , shap_beeswarm_plots$knn
+            , shap_beeswarm_plots$dt
+            , shap_beeswarm_plots$rf
+            , nrow = 4, ncol = 1
+            , heights = c(2, 2, 2, 2)
+            , labels = LETTERS[6:9]
+          )
+        , nrow = 2, ncol = 1
+        , heights = c(4, 8)
+      )
+    , nrow = 1, ncol = 2
+    , widths = c(5, 10)
+  )
+```
+
+```{r figure-7, echo=FALSE, fig.height=12, fig.width=10}
+model_evaluation_plot
+```
+Figure 7. Model evaluation for calibration (A-C), clinical utility (D), discrimination ability (E), and explainability and interpretability (F-J). Calibration and SHAP beeswarm plots are shown for KNN (A and G), DT (B and H), and RF (C and I). Color legends indicating the models are shared among decision curve (D), ROC curve (E), and regression analysis of the predictors using the predicted outcome as the dependent variable (F). Points in decision and ROC curves (D, E) correspond to the chosen threshold closest to 95% specificity in our data. CI, confidence interval; DM, diabetes mellitus; DT, decision tree; KNN, k-nearest neighbor; OHA, oral hypoglycemic agent; OR, odds ration; RF, random forest; ROC, receiver operating characteristics; SCM, structural causal model; SHAP, Shapley additive explanation.
+
+```{r Fig. 2, eval=FALSE, fig.height=12, fig.width=10, include=FALSE}
+model_evaluation_plot
+# Proportionally resized by width = 5.51181 incches
+ggsave("doc/figure2.eps", height = 12, width = 10, units = "in")
+```
 
 ```{r Compute CM using the threshold, include=FALSE}
 eval$cm <-
@@ -1987,7 +2425,26 @@ cm_summary <-
       select(-ref_type, -ref_value) |>
       select(model, metric, avg, everything())
   ) |>
-  mutate_at(c("avg", "lb", "ub"), format, digits = 2) |>
+  mutate(
+    avg =
+      ifelse(
+        metric == "AUC-ROC"
+        , round(avg, 3)
+        , ifelse(metric == "F1", round(avg, 2), round(avg, 1))
+      )
+    , lb =
+      ifelse(
+        metric == "AUC-ROC"
+        , round(lb, 3)
+        , ifelse(metric == "F1", round(lb, 2), round(lb, 1))
+      )
+    , ub =
+      ifelse(
+        metric == "AUC-ROC"
+        , round(ub, 3)
+        , ifelse(metric == "F1", round(ub, 2), round(ub, 1))
+      )
+  ) |>
   unite(ci, lb, ub, sep = ", ") |>
   mutate_at("ci", \(x) paste0("(", x, ")")) |>
   unite(summary, avg, ci, sep = " ") |>
@@ -2017,7 +2474,7 @@ cm_summary |>
       , "DT, decision tree; "
       , "F1, the F1-score; "
       , "KNN, k-nearest neighbor; "
-      , "TH, the chosen threshold, balanced sensitivity and specificity; "
+      , "TH, the chosen threshold closest to 95% specificity in our data; "
       , "NPV, negative predictive value; "
       , "PPV, positive predictive value (precision); "
       , "RF, random forest; "
@@ -2051,7 +2508,7 @@ best_model_cm <-
   column_to_rownames(var = "id")
 ```
 
-```{r Fit PCA model using unused variables, include=FALSE}
+```{r Fit PCA model using variables, include=FALSE}
 pca_model <-
   processed_data |>
   select_if(!str_detect(colnames(processed_data), "_trans$")) |>
@@ -2061,18 +2518,48 @@ pca_model <-
   prcomp()
 ```
 
-```{r figure-6, echo=FALSE, fig.height=7, fig.width=5}
+```{r Fit ontology model using variables, include=FALSE}
+ontology_model <-
+  processed_data |>
+  select_if(!str_detect(colnames(processed_data), "_trans$")) |>
+  colnames() |>
+  lapply(binarize_cat_var, processed_data) |>
+  reduce(cbind) |>
+  t() |>
+  dist(method = "euclidean") |>
+  hclust(method = "complete")
+```
+
+```{r Fit ontology model 2 using PCs, include=FALSE}
+ontology_model2 <-
+  pca_model$x |>
+  t() |>
+  dist(method = "euclidean") |>
+  hclust(method = "complete")
+```
+
+```{r figure-8, echo=FALSE, fig.height=7, fig.width=7}
 ggarrange(
   ggarrange(
     NULL
     , data.frame(
         pc = colnames(pca_model$rotation)
-        , pve = pca_model$sdev^2 / sum(pca_model$sdev^2)
+        , pve = (pca_model$sdev^2 / sum(pca_model$sdev^2)) * 100
+      ) |>
+      left_join(
+        data.frame(
+          pc = ontology_model2$labels
+          , order2 = ontology_model2$order
+          , hcluster2 = cutree(ontology_model2, k = 4)
+        )
+        , by = join_by(pc)
       ) |>
       mutate_at("pc", \(x) factor(x, unique(x))) |>
       ggplot(aes(pc, pve)) +
       geom_vline(xintercept = seq(14) + 0.5, color = "grey") +
       geom_col() +
+      facet_grid(~ hcluster2, scales = "free_x", space = "free_x") +
+      scale_y_continuous("Proportion of\nvariance explained (%)") +
       theme(
         panel.grid = element_blank()
         , axis.title.x = element_blank()
@@ -2081,26 +2568,96 @@ ggarrange(
       )
     , NULL
     , nrow = 1, ncol = 3
-    , widths = c(3.25, 16.5, 0.25)
+    , widths = c(6.45, 12.85, 0.7)
   )
   , as.data.frame(pca_model$rotation) |>
     rownames_to_column(var = "variable") |>
     gather(pc, weight, -variable) |>
+    left_join(
+      data.frame(
+        variable = ontology_model$labels
+        , order = ontology_model$order
+        , hcluster = cutree(ontology_model, k = 6)
+      )
+      , by = join_by(variable)
+    ) |>
+    left_join(
+      data.frame(
+        pc = ontology_model2$labels
+        , order2 = ontology_model2$order
+        , hcluster2 = cutree(ontology_model2, k = 4)
+      )
+      , by = join_by(pc)
+    ) |>
+    mutate(
+      term = sapply(variable, \(x) str_extract_all(x, "_[:digit:]+$")[[1]])
+      , term =
+        ifelse(
+          sapply(term, length) == 0
+          , ""
+          , sapply(term, \(x) str_remove_all(unlist(x)[1], "_"))
+        )
+      , variable = str_remove_all(variable, "_[:digit:]+$")
+    ) |>
+    mutate(
+      term =
+        ifelse(
+          term == ""
+          & variable
+            %in% colnames(processed_data)[sapply(processed_data, is.factor)]
+          , "2"
+          , term
+        )
+    ) |>
+    left_join(
+      processed_data[sapply(processed_data, \(x) !is.null(levels(x)))] |>
+        lapply(levels) |>
+        imap(
+          ~ data.frame(
+              variable = .y
+              , term = as.character(seq(length(.x)))
+              , level =
+                str_remove_all(.x, "^[:digit:] - ") |>
+                str_replace_all("oha", "OHA") |>
+                str_replace_all("OHA_ins", "OHA + insulin")
+            )
+        ) |>
+        reduce(rbind)
+      , by = join_by(variable, term)
+    ) |>
+    left_join(
+      rename(colname_label, variable = colname), by = join_by(variable)
+    ) |>
+    mutate(variable = label) |>
+    select(-label) |>
+    mutate(
+      variable =
+        paste0(
+          variable
+          , ifelse(term == "" & is.na(level), "", paste0(" (=", level, ")"))
+        )
+    ) |>
     mutate_at("pc", \(x) factor(x, unique(x))) |>
+    mutate(variable = reorder(variable, rev(order))) |>
     ggplot(aes(pc, variable, fill = weight)) +
     geom_tile(color = "white") +
-    coord_equal() +
+    facet_grid(hcluster ~ hcluster2, scales = "free", space = "free") +
+    # coord_equal() +
+    xlab("Reduced dimension") +
+    ylab("Original dimension") +
     scale_fill_gradient2(
-      low = "blue", mid = "black", high = "red", midpoint = 0
+      "Weight", low = "blue", mid = "black", high = "red", midpoint = 0
     ) +
     theme(
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
       , legend.position = "bottom"
+      , strip.text.x.top = element_blank()
     )
   , nrow = 2, ncol = 1
   , heights = c(2, 5)
 )
 ```
+Figure 8. Principal component analysis with original and reduced dimensional ontologies using hierarchical clustering. Ontologies were derived by cutting hierarchical cluster tree such that the resulting groups demonstrated meaningful pattern. It was determined based on visual assessment of the weights and semantic assessment of the original dimensions. The former resulted in six ontologies of the reduced dimensions, while the latter resulted in four ontologies of the original dimensions. DM, diabetes mellitus; OHA, oral hypoglycemic agent.
 
 ```{r Fit k-mean model using PC1 and PC2, include=FALSE}
 set.seed(seed)
@@ -2126,7 +2683,7 @@ data_cm_pc_kmean <-
   )
 ```
 
-```{r figure-7, echo=FALSE, fig.height=3.5, fig.width=7}
+```{r figure-9, echo=FALSE, fig.height=3.5, fig.width=7}
 mutate(data_cm_pc_kmean, cm = "All") |>
   rbind(data_cm_pc_kmean) |>
   mutate_at("cm", \(x) factor(x, unique(x))) |>
@@ -2135,11 +2692,15 @@ mutate(data_cm_pc_kmean, cm = "All") |>
   geom_vline(xintercept = 53.5, lty = 2) +
   facet_grid(cm ~ ., scales = "free_y") +
   scale_x_continuous(
-    breaks = sort(c(seq(40, 65, 5), 53.5))
+    "Age (years)"
+    , breaks = sort(c(seq(40, 65, 5), 53.5))
     , labels = sort(c(seq(40, 65, 5), 53.5))
   ) +
+  ylab("Density") +
+  scale_fill_discrete("Cluster") +
   theme(panel.grid.minor.x = element_blank())
 ```
+Figure 9. Sample clustering by k-mean. We selected k=2 post hoc because it provided samples for each cluster among true and false positives and negatives, completely. Age was selected for clustering the samples because it almost singlehandedly determined a principal component that had the highest proportion of the variance explained in our data. FN, false negative; FP, false positive; TN, true negative; TP, true positive.
 
 ```{r Randomly select examples from cluster-CM combinations, include=FALSE}
 comb_cluster_cm <-
@@ -2190,10 +2751,20 @@ waterfall_formatted_data <-
   mutate(
     category =
       ifelse(
+        feature == "dm_treatment" & category == "oha"
+        , "no", category
+      )
+    , category =
+      ifelse(
         feature == "dm_treatment" & category == "oha_ins"
-        , "o+i", category
+        , "yes", category
       )
   ) |>
+  left_join(
+    rename(colname_label, feature = colname), by = join_by(feature)
+  ) |>
+  mutate(feature = label) |>
+  select(-label) |>
   mutate(
     feature =
       ifelse(
@@ -2244,7 +2815,7 @@ shap_waterfall_selected_id <-
   )
 ```
 
-```{r figure-8, fig.height=4.5, fig.width=10}
+```{r figure-10, fig.height=4.5, fig.width=10}
 ggarrange(
   arrange_waterfall_plot(
     "TP", shap_waterfall_selected_id, comb_cluster_cm, top = TRUE
@@ -2257,6 +2828,7 @@ ggarrange(
   , nrow = 4, ncol = 1, heights = c(1.25, 1, 1, 1.25)
 )
 ```
+Figure 10. Error analysis on the selected examples by SHAP waterfall plots. SHAP, Shapley additive explanation. OHA, oral hypoglycemic agent.
 
 # Model deployment
 
@@ -2368,10 +2940,20 @@ dep_formatted_data =
   mutate(
     category =
       ifelse(
+        feature == "dm_treatment" & category == "oha"
+        , "no", category
+      )
+    , category =
+      ifelse(
         feature == "dm_treatment" & category == "oha_ins"
-        , "o+i", category
+        , "yes", category
       )
   ) |>
+  left_join(
+    rename(colname_label, feature = colname), by = join_by(feature)
+  ) |>
+  mutate(feature = label) |>
+  select(-label) |>
   mutate(
     feature =
       ifelse(
@@ -2403,7 +2985,7 @@ shap_waterfall_selected_scenario <-
   )
 ```
 
-```{r figure-9, fig.height=4.75, fig.width=10}
+```{r figure-11, fig.height=4.75, fig.width=10}
 ggarrange(
   arrange_waterfall_plot(
     "OHA"
@@ -2501,7 +3083,7 @@ nomogram <-
         ) +
         geom_label(
           aes(label = l, fill = b)
-          , size = 3, angle = 90, show.legend = FALSE
+          , size = 2.25, angle = 90, show.legend = FALSE
         ) +
         theme_blank()
       , NULL
@@ -2517,7 +3099,10 @@ nomogram <-
       scale_x_continuous("Fatigue ->") +
       scale_y_continuous("HbA1c") +
       theme(
+        axis.title.x = element_text(size = 8)
+        , axis.text.x = element_text(size = 7)
         , axis.title.y = element_blank()
+        , axis.text.y = element_text(size = 7)
         , strip.text.y = element_blank()
       )
     , nomogram_data |>
@@ -2529,21 +3114,135 @@ nomogram <-
       scale_x_continuous("Impact on fatigue ->") +
       scale_color_discrete("") +
       theme(
-        axis.title.y = element_blank()
+        axis.title.x = element_text(size = 8)
+        , axis.text.x = element_text(size = 7)
+        , axis.title.y = element_blank()
         , axis.text.y = element_blank()
         , strip.text.y = element_blank()
       )
     , nrow = 1, ncol = 3
-    , widths = c(1.5, 3, 2.5)
+    , widths = c(1.33071, 1.5, 1.5)
   )
 ```
 
-```{r figure-10, echo=FALSE, fig.height=1.75, fig.width=5.5, include=FALSE}
-predict_with_shap_waterfall(
-  comorbidity = 0 # 0 or 1
-  , hba1c = 8 # 5.9 to 10.1
-  , dm_treatment = 0 # 0 or 1
-)
+```{r Draw workflow for the model, include=FALSE}
+workflow <-
+  data.frame(
+    x = c(0, 1), y = c(0, 2), j = c(NA, NA), type = c(NA, NA), label = c("", "")
+  ) |>
+  rbind(data.frame(x = 0.5, y = 2, j = 1.84, type = 1, label = "Start")) |>
+  rbind(
+    data.frame(
+      x = 0.5, y = 1.7, j = 1.4, type = 2
+      , label = "Type 2 diabetes,\nOHA last 3 months,\nand fatigue?"
+    )
+  ) |>
+  rbind(data.frame(x = 0, y = 1.7, j = NA, type = 3, label = "No")) |>
+  rbind(data.frame(x = 0.6, y = 1.5, j = NA, type = 3, label = "Yes")) |>
+  rbind(
+    data.frame(
+      x = 0.5, y = 1.3, j = 1.05, type = 2
+      , label = "Medical records\naccessible?"
+    )
+  ) |>
+  rbind(data.frame(x = 0, y = 1.3, j = NA, type = 3, label = "No")) |>
+  rbind(data.frame(x = 0.6, y = 1.15, j = NA, type = 3, label = "Yes")) |>
+  rbind(
+    data.frame(
+      x = 0.5, y = 0.9, j = 0.66, type = 1
+      , label = "Use\nweb application\nor nomogram"
+    )
+  ) |>
+  rbind(
+    data.frame(x = 0.5, y = 0.6, j = 0.4, type = 2, label = "Fatigue detected?")
+  ) |>
+  rbind(data.frame(x = 0, y = 0.6, j = NA, type = 3, label = "No")) |>
+  rbind(data.frame(x = 0.6, y = 0.5, j = NA, type = 3, label = "Yes")) |>
+  rbind(
+    data.frame(
+      x = 0.5, y = 0.3, j = 0.06, type = 2
+      , label = "HbA1c impact >0\nand the highest?"
+    )
+  ) |>
+  rbind(data.frame(x = 0, y = 0.3, j = NA, type = 3, label = "No")) |>
+  rbind(data.frame(x = 0.6, y = 0.15, j = NA, type = 3, label = "Yes")) |>
+  rbind(data.frame(x = 0.5, y = 0, j = NA, type = 1, label = "End")) |>
+  mutate(i = x - 0.425) |>
+  ggplot(aes(x, y)) +
+  geom_edges(
+    aes(xend = ifelse(type == 2, i, NA), yend = y)
+    , arrow = arrow(length = unit(0.15, "line"), type = "closed")
+    , na.rm = TRUE
+  ) +
+  geom_edges(
+    aes(xend = x, yend = j)
+    , arrow = arrow(length = unit(0.15, "line"), type = "closed")
+    , na.rm = TRUE
+  ) +
+  geom_label(
+    aes(label = ifelse(type == 1, label, NA), fill = factor(type))
+    , size = 2, hjust = 0.5, vjust = 0.5, na.rm = TRUE, show.legend = FALSE
+  ) +
+  geom_label(
+    aes(label = ifelse(type == 2, label, NA), fill = factor(type))
+    , size = 1.75, hjust = 0.5, vjust = 0.5, na.rm = TRUE, show.legend = FALSE
+  ) +
+  geom_text(
+    aes(label = ifelse(type == 3, label, NA))
+    , size = 1.5, hjust = 0.5, vjust = 0.5, na.rm = TRUE
+  ) +
+  theme_blank()
+```
+
+```{r figure-12, echo=FALSE, fig.height=3, fig.width=1.1811, include=FALSE}
+workflow
+```
+
+```{r Design web app interface, include=FALSE}
+web_app_interface <-
+  ggarrange(
+    data.frame(x = c(0, 1), y = c(0, 0.6), label = c("", "")) |>
+      rbind(data.frame(x = 0.05, y = 0.5, label = "Summary:")) |>
+      rbind(
+        data.frame(x = 0.05, y = 0.4, label = "Is fatigue detected? Yes")
+      ) |>
+      rbind(
+        data.frame(
+          x = 0.05, y = 0.3
+          , label = "Fatigue probability: 43.9% (threshold=40%)"
+        )
+      ) |>
+      rbind(
+        data.frame(
+          x = 0.05, y = 0.1
+          , label = "Is fatigue related to poor HbA1c?"
+        )
+      ) |>
+      rbind(
+        data.frame(
+          x = 0.05, y = 0
+          , label =
+            paste0(
+              "Yes, HbA1c (=8) increases fatigue probability "
+              , "the highest by 36.33%."
+            )
+        )
+      ) |>
+      ggplot(aes(x, y)) +
+      geom_text(aes(label = label), size = 2.5, hjust = 0, vjust = 0) +
+      theme_blank()
+    , predict_with_shap_waterfall(
+        comorbidity = 0 # 0 or 1
+        , hba1c = 8 # 5.9 to 10.1
+        , dm_treatment = 0 # 0 or 1
+      )
+    , nrow = 2, ncol = 1
+    , heights = c(1.25, 1.75)
+  )
+```
+
+```{r figure-13, echo=FALSE, fig.height=3, fig.width=4.33071, include=FALSE}
+web_app_interface
 ```
 
 ```{r Save input for deploying models, eval=FALSE, include=FALSE}
@@ -2552,12 +3251,35 @@ saveRDS(best_model_prob, "data/best_model_prob.rds")
 saveRDS(dep_formatted_data, "data/dep_formatted_data.rds")
 ```
 
-```{r figure-10, echo=FALSE, fig.height=7, fig.width=7}
+```{r figure-14, echo=FALSE, fig.height=5, fig.width=5.51181}
 nomogram
 ```
 
+```{r Combine plots for model usage, include=FALSE}
+model_usage_plots <-
+  ggarrange(
+    ggarrange(
+      workflow
+      , web_app_interface
+      , nrow = 1, ncol = 2
+      , widths = c(1.1811, 4.33071)
+      , labels = LETTERS[1:2]
+    )
+    , nomogram
+    , nrow = 2, ncol = 1
+    , heights = c(3, 5)
+    , labels = c("", LETTERS[3])
+  )
+```
 
+```{r figure-15, echo=FALSE, fig.height=8, fig.width=5.51181}
+model_usage_plots
+```
 
+```{r Fig. 3, eval=FALSE, fig.height=8, fig.width=5.51181, include=FALSE}
+model_usage_plots
+ggsave("doc/figure3.eps", height = 8, width = 5.51181, units = "in")
+```
 
 
 
