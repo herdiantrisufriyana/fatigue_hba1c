@@ -1,6 +1,6 @@
 # Large language model-assisted causal machine learning for identifying fatigue-related poor glycated hemoglobin in type 2 diabetes
 
-Herdiantri Sufriyana,1,¶ Debby Syahru Romadlon,2,¶ Rudy Kurniawan,3 Safiruddin Al Baqi,4 Emmanuel Ekpor5, Eric Peprah Osei6, Hsiao-Yean Chiu, 7,8,9,10,* Emily Chia-Yu Su.1,*
+Herdiantri Sufriyana,1,¶ Debby Syahru Romadlon,2,¶ Rudy Kurniawan,3 Safiruddin Al Baqi,4 Emmanuel Ekpor5, Eric Peprah Osei6, Hsiao-Yean Chiu, 7,8,9,10,* Emily Chia-Yu Su.1,11,12*
 
 1 Institute of Biomedical Informatics, College of Medicine, National Yang Ming Chiao Tung University, Taipei, Taiwan.
 2 Faculty of Nursing, Chulalongkorn University, Bangkok, Thailand.
@@ -11,7 +11,9 @@ Herdiantri Sufriyana,1,¶ Debby Syahru Romadlon,2,¶ Rudy Kurniawan,3 Safiruddin
 7 School of Nursing, College of Nursing, Taipei Medical University, Taipei, Taiwan.
 8 Research Center of Sleep Medicine, College of Medicine, Taipei Medical University, Taipei, Taiwan.
 9 Department of Nursing, Taipei Medical University Hospital, Taipei, Taiwan.
-10 Research Center of Sleep Medicine, Taipei Medical University Hospital, Taipei, Taiwan
+10 Research Center of Sleep Medicine, Taipei Medical University Hospital, Taipei, Taiwan.
+11 Graduate Institute of Biomedical Informatics, College of Medical Science and Technology, Taipei Medical University, Taipei, Taiwan.
+12 Clinical Big Data Research Center, Taipei Medical University Hospital, Taipei, Taiwan.
 
 ¶ Equal contribution as the first authors
 * Corresponding authors:
