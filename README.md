@@ -22,7 +22,7 @@ Hsiao-Yean Chiu. School of Nursing, College of Nursing, Taipei Medical Universit
 
 ## Vignette
 
-Explore the vignette [**here**](https://herdiantrisufriyana.github.io/rplec/index.html).
+Explore the vignette [**here**](https://herdiantrisufriyana.github.io/fatigue_hba1c/index.html).
 
 ## System requirements
 
