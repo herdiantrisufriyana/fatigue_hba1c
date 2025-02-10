@@ -1,6 +1,22 @@
-# Large language model-assisted causal machine learning for identifying fatigue-related poor HbA1c in type 2 diabetes
+# Large language model-assisted causal machine learning for identifying fatigue-related poor glycated hemoglobin in type 2 diabetes
 
-Herdiantri Sufriyana, Emily Chia-Yu Su, Rudy Kurniawan, Hsiao-Yean Chiu, Safiruddin Al-Baqi, Debby Syahru Romadlon
+Herdiantri Sufriyana,1,¶ Debby Syahru Romadlon,2,¶ Rudy Kurniawan,3 Safiruddin Al Baqi,4 Emmanuel Ekpor5, Eric Peprah Osei6, Hsiao-Yean Chiu, 7,8,9,10,* Emily Chia-Yu Su.1,*
+
+1 Institute of Biomedical Informatics, College of Medicine, National Yang Ming Chiao Tung University, Taipei, Taiwan.
+2 Faculty of Nursing, Chulalongkorn University, Bangkok, Thailand.
+3 Diabetes Connection Care, Eka Hospital Bumi Serpong Damai, Tangerang, Indonesia.
+4 Faculty of Education and Teaching Sciences, State Islamic Institute of Ponorogo, Ponorogo, Indonesia.
+5 School of Nursing, University of Ghana, Legon, Ghana.
+6 College of Nursing, University of Illinois Chicago, Illinois, United States.
+7 School of Nursing, College of Nursing, Taipei Medical University, Taipei, Taiwan.
+8 Research Center of Sleep Medicine, College of Medicine, Taipei Medical University, Taipei, Taiwan.
+9 Department of Nursing, Taipei Medical University Hospital, Taipei, Taiwan.
+10 Research Center of Sleep Medicine, Taipei Medical University Hospital, Taipei, Taiwan
+
+¶ Equal contribution as the first authors
+* Corresponding authors:
+Emily Chia-Yu Su. Institute of Biomedical Informatics, College of Medicine, National Yang Ming Chiao Tung University, 155, Section 2, Linong Street, Beitou District, Taipei 112304, Taiwan. Tel: +886-2-28267000 Ext. 67391. E-mail: emilysu@nycu.edu.tw.
+Hsiao-Yean Chiu. School of Nursing, College of Nursing, Taipei Medical University, 250, Wuxing Street, Xinyi District, Taipei 11031, Taiwan. Tel: +886-2-27361661 Ext. 6339. Email address: hychiu0315@tmu.edu.tw.
 
 ## System requirements
 
