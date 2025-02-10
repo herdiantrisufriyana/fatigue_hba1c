@@ -1,9 +1,56 @@
 ---
-title: "Causal machine learning for identifying fatigue-related poor glycated hemoglobin among individuals with type 2 diabetes"
-author: "Herdiantri Sufriyana, Emily Chia-Yu Su, Rudy Kurniawan, Hsiao-Yean Chiu,
-  Safiruddin Al-Baqi, Debby Syahru Romadlon"
+title: "Large language model-assisted causal machine learning for identifying fatigue-related poor glycated hemoglobin in type 2 diabetes"
+author:
+  - name: Herdiantri Sufriyana
+    affiliation:
+    - &nycu Institute of Biomedical Informatics, College of Medicine, National 
+      Yang Ming Chiao Tung University, Taipei, Taiwan.
+    email: herdi@nycu.edu.tw
+  - name: Debby Syahru Romadlon
+    affiliation:
+    - &cu Faculty of Nursing, Chulalongkorn University, Bangkok, Thailand.
+  - name: Rudy Kurniawan
+    affiliation:
+    - &chula Diabetes Connection Care, Eka Hospital Bumi Serpong Damai, 
+      Tangerang, Indonesia.
+  - name: Safiruddin Al Baqi
+    affiliation:
+    - &siip Faculty of Education and Teaching Sciences, State Islamic 
+      Institute of Ponorogo, Ponorogo, Indonesia.
+  - name: Emmanuel Ekpor
+    affiliation:
+    - &ug School of Nursing, University of Ghana, Legon, Ghana.
+  - name: Eric Peprah Osei
+    affiliation:
+    - &uic College of Nursing, University of Illinois Chicago, Illinois, 
+      United States.
+  - name: Hsiao-Yean Chiu
+    affiliation:
+    - &tmu School of Nursing, College of Nursing, Taipei Medical University, 
+      Taipei, Taiwan.
+    - &tmu2 Research Center of Sleep Medicine, College of Medicine, 
+      Taipei Medical University, Taipei, Taiwan.
+    - &tmuh Department of Nursing, Taipei Medical University Hospital, Taipei, 
+      Taiwan.
+  - name: Emily Chia-Yu Su
+    affiliation:
+    - *nycu
+    - &tmu3 Graduate Institute of Biomedical Informatics, College of Medical 
+      Science and Technology, Taipei Medical University, Taipei, Taiwan.
+    - &tmuh2 Clinical Big Data Research Center, Taipei Medical University 
+      Hospital, Taipei, Taiwan.
 date: "2024-08-09"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+vignette: >
+  %\VignetteIndexEntry{Large language model-assisted causal machine learning for identifying fatigue-related poor glycated hemoglobin in type 2 diabetes}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
 ---
 
 # Programming environment
@@ -45,8 +92,6 @@ list.files('R/',full.names=T) |>
 ```
 
 # Data preprocessing
-
-## Data cleaning
 
 ```{r Load raw data, include=FALSE}
 raw_data <- haven::read_sav("inst/extdata/raw_data3.sav")
@@ -790,7 +835,7 @@ pairwise_cat_sum |>
   kable_classic()
 ```
 
-```{r Conduct correlation tests for each pair with PS, include=FALSE}
+```{r Conduct corr tests for each pair with PS, eval=FALSE, include=FALSE}
 correlation_matrix_ps <-
   ms_added_data |>
   colnames() |>
@@ -837,6 +882,12 @@ correlation_matrix_ps <-
       )
   ) |>
   reduce(rbind)
+
+saveRDS(correlation_matrix_ps, "data/correlation_matrix_ps.rds")
+```
+
+```{r Load pre-conduct corr tests for each pair with PS, include=FALSE}
+correlation_matrix_ps <- readRDS("data/correlation_matrix_ps.rds")
 ```
 
 ```{r Conduct correlation tests for each pair without PS, include=FALSE}
@@ -1191,6 +1242,8 @@ correlation_direction_response |>
   left_join(rename(colname_label, V2 = colname), by = join_by(V2)) |>
   mutate(V2 = label) |>
   select(-label) |>
+  mutate(response = str_remove_all(response, "\\*\\*")) |>
+  mutate(response = str_remove_all(response, "#")) |>
   rename(variable_1 = V1, variable_2 = V2) |>
   rename_all(str_replace_all, "_", " ") |>
   rename_all(str_to_sentence) |>
@@ -2136,7 +2189,7 @@ eval$threshold <-
   )
 ```
 
-```{r Determine threshold, include=FALSE}
+```{r Assign threshold, include=FALSE}
 th <-
   eval$threshold |>
   lapply(filter, metric == "th") |>
@@ -2270,7 +2323,7 @@ ggarrange(
 
 Figure 6. Model explainability: (A) regression analysis of the predictors; (B) SHAP beeswarm plot of KNN; (C) SHAP beeswarm plot of DT; and (D) SHAP beeswarm plot of RF. CI, confidence interval; DM, diabetes mellitus; DT, decision tree; KNN, k-nearest neighbor; OHA, oral hypoglycemic agent; OR, odds ration; RF, random forest; SCM, structural causal model; SHAP, Shapley additive explanation.
 
-```{r Decision curve plots, include=FALSE}
+```{r Predmod decision curve plots, include=FALSE}
 predmod_decision_curve <-
   data.frame(th = NA, nb = NA, type = "SCM") |>
   rbind(mutate(eval_plot_df$knn$decision$plot$data, type = "KNN")) |>
@@ -2317,7 +2370,7 @@ predmod_decision_curve <-
   theme(legend.position = "none")
 ```
 
-```{r Decision curve plots, include=FALSE}
+```{r Predmod ROC curve, include=FALSE}
 predmod_roc_curve <-
   data.frame(th = NA, tpr = NA, tnr = NA, type = "SCM") |>
   rbind(mutate(eval_plot_df$knn$discrimination$plot$data, type = "KNN")) |>
@@ -2345,7 +2398,7 @@ predmod_roc_curve <-
   theme(legend.position = "none")
 ```
 
-```{r Decision curve plots, include=FALSE}
+```{r Model evaluation plots, include=FALSE}
 model_evaluation_plot <-
   ggarrange(
     ggarrange(
@@ -3281,7 +3334,11 @@ model_usage_plots
 ggsave("doc/figure3.eps", height = 8, width = 5.51181, units = "in")
 ```
 
+# Session information
 
+```{r session-info, echo=TRUE}
+sessionInfo()
+```
 
 
 
