@@ -93,6 +93,13 @@ list.files('R/',full.names=T) |>
 
 # Data preprocessing
 
+```{r Download raw data, eval=FALSE, include=FALSE}
+download.file(
+  "https://zenodo.org/records/14848167/files/raw_data3.sav?download=1"
+  , destfile = "inst/extdata/raw_data3.sav"
+)
+```
+
 ```{r Load raw data, include=FALSE}
 raw_data <- haven::read_sav("inst/extdata/raw_data3.sav")
 ```
